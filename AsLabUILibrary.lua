@@ -16,13 +16,13 @@ local Style = {
     Stroke = Color3.fromRGB(255, 255, 255),
     StrokeTransparency = 0.72,
     Radius = UDim.new(0, s(18)),
-    Text = Color3.fromRGB(245, 245, 247),
+    Text = Color3.new(1, 1, 1),
     SubText = Color3.fromRGB(180, 184, 194),
     Font = Enum.Font.Gotham,
     SilverTop = Color3.fromRGB(252, 253, 255),
     SilverBottom = Color3.fromRGB(196, 201, 212),
     SilverTransparency = 0.12,
-    ActiveText = Color3.fromRGB(24, 25, 30),
+    ActiveText = Color3.new(0, 0, 0),
     BlockStroke = Color3.fromRGB(180, 186, 200),
     BlockStrokeTransparency = 0.35,
     BlockStrokeThickness = 1.4,
@@ -49,8 +49,8 @@ local Cfg = {
     TabTextSize = 15,
     TabTextGap = 8,
     TabRowPadX = 6,
-    TabActiveColor = Color3.fromRGB(0, 0, 0),
-    TabInactiveColor = Color3.fromRGB(150, 152, 162),
+    TabActiveColor = Color3.new(0, 0, 0),
+    TabInactiveColor = Color3.new(1, 1, 1),
     TabColorFadeTime = 0.22,
     TabSelFill = Color3.fromRGB(34, 34, 42),
     TabSelFillTransparency = 0.15,
@@ -147,7 +147,7 @@ local function applyIcon(imageLabel, icon, color)
         imageLabel.ImageRectOffset = asset.ImageRectOffset
         imageLabel.ImageRectSize = asset.ImageRectSize
     end
-    imageLabel.ImageColor3 = color or (Style and Style.Text) or Color3.fromRGB(245, 245, 247)
+    imageLabel.ImageColor3 = color or (Style and Style.Text) or Color3.new(1, 1, 1)
     imageLabel.ScaleType = Enum.ScaleType.Fit
     return true
 end
