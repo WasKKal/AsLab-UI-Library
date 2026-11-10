@@ -64,4 +64,20 @@ TabSystem:AddButton({ Title = "About", Icon = "help-circle", Callback = function
     print("About AsLab UI")
 end })
 
+local ESP = TabSystem:AddToggle({ Title = "ESP", Icon = "eye", Default = false, Callback = function(v)
+    print("ESP:", v)
+end })
+
+ESP:AddToggle({ Title = "Highlight", Default = true, Callback = function(v)
+    print("Highlight:", v)
+end })
+
+ESP:AddColorPicker({ Title = "Highlight Color", Default = Color3.fromRGB(255, 96, 96), Callback = function(c)
+    print("Highlight Color:", c)
+end })
+
+ESP:AddToggle({ Title = "Draw Skeleton", Default = false, Callback = function(v)
+    print("Draw Skeleton:", v)
+end })
+
 print("AsLab UI loaded, window fading in...")

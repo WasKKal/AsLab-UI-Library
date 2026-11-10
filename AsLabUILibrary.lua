@@ -695,12 +695,229 @@ addDetailRow = function(win, ctrl, kind, opts)
             if opts.Callback then pcall(opts.Callback) end
         end)
         return {}
+    elseif kind == "ColorPicker" then
+        local box, label, hit = makeBox(row, s(110), "")
+        local swatch = Instance.new("Frame", box)
+        swatch.Size = UDim2.new(1, -s(6), 1, -s(6))
+        swatch.Position = UDim2.new(0, s(3), 0, s(3))
+        swatch.BorderSizePixel = 0
+        swatch.ZIndex = 1
+        local swc = Instance.new("UICorner", swatch)
+        swc.CornerRadius = UDim.new(0, s(5))
+        label.ZIndex = 2
+        label.TextColor3 = Color3.new(1, 1, 1)
+        local lstroke = Instance.new("UIStroke", label)
+        lstroke.Color = Color3.new(0, 0, 0)
+        lstroke.Transparency = 0.35
+        lstroke.Thickness = 1
+
+        local def = Color3.fromRGB(255, 96, 96)
+        if typeof(opts.Default) == "Color3" then def = opts.Default end
+        local h, sat, val = def:ToHSV()
+
+        local pw, ph = s(210), s(158)
+        local panel = makeGlass(layer, {
+            Name = "ColorPanel",
+            Size = UDim2.fromOffset(pw, ph),
+            Position = UDim2.new(0.5, -pw / 2, 0.5, -ph / 2),
+            Transparency = 0.12,
+            Radius = UDim.new(0, s(12)),
+            Color = Color3.fromRGB(20, 20, 26),
+            Plain = true, NoStroke = true, NoSheen = true,
+        })
+        panel.ClipsDescendants = true
+        panel.Visible = false
+        panel.ZIndex = 40
+        local pst = Instance.new("UIStroke", panel)
+        pst.Color = Style.BlockStroke
+        pst.Transparency = 0.4
+        pst.Thickness = 1
+        win._colorPanels = win._colorPanels or {}
+        table.insert(win._colorPanels, panel)
+
+        local pad = s(10)
+        local svW, svH = pw - pad * 2, s(90)
+        local sv = Instance.new("Frame", panel)
+        sv.Name = "SV"
+        sv.Size = UDim2.fromOffset(svW, svH)
+        sv.Position = UDim2.fromOffset(pad, pad)
+        sv.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+        sv.BorderSizePixel = 0
+        sv.ClipsDescendants = true
+        local svc = Instance.new("UICorner", sv)
+        svc.CornerRadius = UDim.new(0, s(6))
+
+        local white = Instance.new("Frame", sv)
+        white.Size = UDim2.fromScale(1, 1)
+        white.BackgroundColor3 = Color3.new(1, 1, 1)
+        white.BackgroundTransparency = 0
+        white.BorderSizePixel = 0
+        local wg = Instance.new("UIGradient", white)
+        wg.Rotation = 0
+        wg.Color = ColorSequence.new(Color3.new(1, 1, 1))
+        wg.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+
+        local black = Instance.new("Frame", sv)
+        black.Size = UDim2.fromScale(1, 1)
+        black.BackgroundColor3 = Color3.new(0, 0, 0)
+        black.BackgroundTransparency = 0
+        black.BorderSizePixel = 0
+        local bg2 = Instance.new("UIGradient", black)
+        bg2.Rotation = 90
+        bg2.Color = ColorSequence.new(Color3.new(0, 0, 0))
+        bg2.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(1, 0),
+        })
+
+        local cursor = Instance.new("Frame", sv)
+        cursor.Size = UDim2.fromOffset(s(10), s(10))
+        cursor.BackgroundTransparency = 1
+        cursor.BorderSizePixel = 0
+        cursor.ZIndex = 3
+        local cc = Instance.new("UICorner", cursor)
+        cc.CornerRadius = UDim.new(1, 0)
+        local cstroke = Instance.new("UIStroke", cursor)
+        cstroke.Color = Color3.new(1, 1, 1)
+        cstroke.Thickness = 1.5
+
+        local hueY = pad + svH + s(8)
+        local hue = Instance.new("Frame", panel)
+        hue.Name = "Hue"
+        hue.Size = UDim2.fromOffset(svW, s(12))
+        hue.Position = UDim2.fromOffset(pad, hueY)
+        hue.BorderSizePixel = 0
+        hue.ClipsDescendants = true
+        local hc = Instance.new("UICorner", hue)
+        hc.CornerRadius = UDim.new(0, s(6))
+        local hg = Instance.new("UIGradient", hue)
+        hg.Rotation = 0
+        hg.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+            ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+            ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+            ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+            ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0)),
+        })
+        local hcur = Instance.new("Frame", hue)
+        hcur.Size = UDim2.fromOffset(s(4), s(16))
+        hcur.Position = UDim2.new(h, -s(2), 0.5, -s(8))
+        hcur.BackgroundColor3 = Color3.new(1, 1, 1)
+        hcur.BorderSizePixel = 0
+        local hcc = Instance.new("UICorner", hcur)
+        hcc.CornerRadius = UDim.new(0, s(2))
+
+        local prev = Instance.new("Frame", panel)
+        prev.Size = UDim2.fromOffset(s(22), s(22))
+        prev.Position = UDim2.fromOffset(pad, ph - pad - s(22))
+        prev.BorderSizePixel = 0
+        local pvc = Instance.new("UICorner", prev)
+        pvc.CornerRadius = UDim.new(0, s(5))
+        local pvst = Instance.new("UIStroke", prev)
+        pvst.Color = Style.BlockStroke
+        pvst.Transparency = 0.4
+        pvst.Thickness = 1
+        local hexLabel = Instance.new("TextLabel", panel)
+        hexLabel.Size = UDim2.new(1, -pad * 2 - s(34), 0, s(22))
+        hexLabel.Position = UDim2.fromOffset(pad + s(30), ph - pad - s(22))
+        hexLabel.Font = Style.Font
+        hexLabel.TextSize = s(12)
+        hexLabel.TextColor3 = Style.Text
+        hexLabel.TextXAlignment = Enum.TextXAlignment.Left
+        hexLabel.BackgroundTransparency = 1
+
+        local function toHex(c)
+            return string.format("#%02X%02X%02X",
+                math.floor(c.R * 255 + 0.5),
+                math.floor(c.G * 255 + 0.5),
+                math.floor(c.B * 255 + 0.5))
+        end
+        local function refresh(fire)
+            local c = Color3.fromHSV(h, sat, val)
+            local hex = toHex(c)
+            swatch.BackgroundColor3 = c
+            prev.BackgroundColor3 = c
+            label.Text = hex
+            hexLabel.Text = hex
+            sv.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+            cursor.Position = UDim2.new(sat, -s(5), 1 - val, -s(5))
+            hcur.Position = UDim2.new(h, -s(2), 0.5, -s(8))
+            if fire and opts.Callback then pcall(opts.Callback, c) end
+        end
+        local function grab(apply)
+            local m = UserInputService:GetMouseLocation()
+            apply(m.X, m.Y)
+            local conn = UserInputService.InputChanged:Connect(function(i)
+                if i.UserInputType == Enum.UserInputType.MouseMovement then
+                    apply(i.Position.X, i.Position.Y)
+                end
+            end)
+            local up
+            up = UserInputService.InputEnded:Connect(function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                    conn:Disconnect()
+                    up:Disconnect()
+                end
+            end)
+        end
+        local function setSV(px, py)
+            local p, sz = sv.AbsolutePosition, sv.AbsoluteSize
+            sat = math.clamp((px - p.X) / math.max(1, sz.X), 0, 1)
+            val = 1 - math.clamp((py - p.Y) / math.max(1, sz.Y), 0, 1)
+            refresh(true)
+        end
+        local function setHue(px)
+            local p, sz = hue.AbsolutePosition, hue.AbsoluteSize
+            h = math.clamp((px - p.X) / math.max(1, sz.X), 0, 1)
+            refresh(true)
+        end
+
+        local svHit = Instance.new("TextButton", panel)
+        svHit.Size = UDim2.fromOffset(svW, svH)
+        svHit.Position = UDim2.fromOffset(pad, pad)
+        svHit.BackgroundTransparency = 1
+        svHit.Text = ""
+        svHit.AutoButtonColor = false
+        svHit.ZIndex = 5
+        svHit.MouseButton1Down:Connect(function() grab(setSV) end)
+        local hueHit = Instance.new("TextButton", panel)
+        hueHit.Size = UDim2.fromOffset(svW, s(12))
+        hueHit.Position = UDim2.fromOffset(pad, hueY)
+        hueHit.BackgroundTransparency = 1
+        hueHit.Text = ""
+        hueHit.AutoButtonColor = false
+        hueHit.ZIndex = 5
+        hueHit.MouseButton1Down:Connect(function() grab(setHue) end)
+
+        hit.MouseButton1Click:Connect(function()
+            for _, p in ipairs(win._colorPanels or {}) do
+                if p ~= panel then p.Visible = false end
+            end
+            panel.Visible = not panel.Visible
+        end)
+
+        refresh(false)
+        local obj = { Value = def }
+        function obj:Set(c)
+            if typeof(c) == "Color3" then
+                h, sat, val = c:ToHSV()
+                refresh(false)
+            end
+        end
+        function obj:Get() return Color3.fromHSV(h, sat, val) end
+        return obj
     end
     return {}
 end
 
 openDetail = function(win, ctrl)
     if win._detail then return end
+    for _, p in ipairs(win._colorPanels or {}) do p.Visible = false end
     if win._listening then
         win._listening.label.Text = "···"
         win._listening.ctrl._keybind = nil
@@ -892,6 +1109,7 @@ local function addControl(tab, kind, opts)
     function ctrl:AddSlider(o) return addDetailRow(tab._win, ctrl, "Slider", o) end
     function ctrl:AddToggle(o) return addDetailRow(tab._win, ctrl, "Toggle", o) end
     function ctrl:AddButton(o) return addDetailRow(tab._win, ctrl, "Button", o) end
+    function ctrl:AddColorPicker(o) return addDetailRow(tab._win, ctrl, "ColorPicker", o) end
 
     table.insert(tab._controls, ctrl)
     relayout(tab)
