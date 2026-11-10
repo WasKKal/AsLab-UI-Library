@@ -1638,7 +1638,7 @@ function Library:ShowNotify(opts)
 end
 
 local function cancelAnim(win)
-    for _, key in ipairs({ "_mainTween", "_mainFadeTween", "_cornerTween", "_backdropTween", "_orbTween" }) do
+    for _, key in ipairs({ "_mainTween", "_mainFadeTween", "_cornerTween", "_orbTween" }) do
         local tw = win[key]
         if tw then pcall(function() tw:Cancel() end) win[key] = nil end
     end
@@ -1670,10 +1670,6 @@ local function collapse(win)
             { CornerRadius = UDim.new(0, ORB / 2) })
         win._cornerTween:Play()
     end
-    win._backdropTween = TweenService:Create(win._backdrop,
-        TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
-        { BackgroundTransparency = 1 })
-    win._backdropTween:Play()
     win._orb.Visible = true
     win._orb.GroupTransparency = 1
     win._orbTween = TweenService:Create(win._orb,
@@ -1718,8 +1714,6 @@ local function expand(win)
             { CornerRadius = UDim.new(0, s(24)) })
         win._cornerTween:Play()
     end
-    win._backdropTween = TweenService:Create(win._backdrop, ti, { BackgroundTransparency = 0.45 })
-    win._backdropTween:Play()
     task.delay(COLLAPSE_T * 0.7, function()
         if not win._collapsed and win._gui.Parent then
             for _, item in ipairs(win._shortcuts) do
@@ -1750,14 +1744,6 @@ function Library.CreateWindow(opts)
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-    local backdrop = Instance.new("Frame", gui)
-    backdrop.Name = "Backdrop"
-    backdrop.Size = UDim2.fromScale(1, 1)
-    backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
-    backdrop.BackgroundTransparency = 0.45
-    backdrop.BorderSizePixel = 0
-    backdrop.ZIndex = 0
 
     local main = makeGlass(gui, {
         Name = "Main",
@@ -1974,7 +1960,6 @@ function Library.CreateWindow(opts)
         _listening = nil,
         _detail = nil,
         _detailContainer = nil,
-        _backdrop = backdrop,
         _orb = orb,
         _orbIcon = orbIcon,
         _orbInfo = orbInfo,
