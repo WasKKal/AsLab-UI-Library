@@ -72,6 +72,9 @@ local ROW_H        = s(34)
 local ROW_GAP      = s(8)
 local DETAIL_TOP   = s(42)
 local HOLD_TIME    = 0.45
+local FOOTER_H     = s(38)
+local ORB          = s(52)
+local COLLAPSE_T   = 0.38
 
 local function httpGet(url)
     local ok, res = pcall(function()
@@ -290,6 +293,7 @@ fadeGroup = function(group, target, onDone)
     local tw = TweenService:Create(group, ti, { GroupTransparency = target })
     if onDone then tw.Completed:Connect(function() pcall(onDone) end) end
     tw:Play()
+    return tw
 end
 
 local function relayout(tab)
@@ -1175,6 +1179,62 @@ function selectTab(win, activeIdx)
     win._selected = win._tabs[activeIdx]
 end
 
+local function cancelAnim(win)
+    for _, key in ipairs({ "_mainTween", "_backdropTween", "_orbTween" }) do
+        local tw = win[key]
+        if tw then pcall(function() tw:Cancel() end) win[key] = nil end
+    end
+end
+
+local function collapse(win)
+    if win._collapsed then return end
+    win._collapsed = true
+    cancelAnim(win)
+    for _, item in ipairs(win._shortcuts) do
+        if item.frame and item.frame.Parent then item.frame.Visible = false end
+    end
+    local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+    win._mainTween = TweenService:Create(win._main, ti, {
+        Size = UDim2.fromOffset(ORB, ORB),
+        GroupTransparency = 1,
+    })
+    win._mainTween:Play()
+    win._backdropTween = TweenService:Create(win._backdrop, ti, { BackgroundTransparency = 1 })
+    win._backdropTween:Play()
+    task.delay(COLLAPSE_T + 0.02, function()
+        if win._collapsed and win._gui.Parent then
+            win._main.Visible = false
+            win._orb.Visible = true
+            win._orbTween = fadeGroup(win._orb, 0)
+        end
+    end)
+end
+
+local function expand(win)
+    if not win._collapsed then return end
+    win._collapsed = false
+    cancelAnim(win)
+    win._main.Visible = true
+    win._orbTween = fadeGroup(win._orb, 1, function()
+        if not win._collapsed and win._orb.Parent then win._orb.Visible = false end
+    end)
+    local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+    win._mainTween = TweenService:Create(win._main, ti, {
+        Size = UDim2.fromOffset(win._sizeX, win._sizeY),
+        GroupTransparency = 0,
+    })
+    win._mainTween:Play()
+    win._backdropTween = TweenService:Create(win._backdrop, ti, { BackgroundTransparency = 0.45 })
+    win._backdropTween:Play()
+    task.delay(COLLAPSE_T * 0.7, function()
+        if not win._collapsed and win._gui.Parent then
+            for _, item in ipairs(win._shortcuts) do
+                if item.frame and item.frame.Parent then item.frame.Visible = true end
+            end
+        end
+    end)
+end
+
 function Library.CreateWindow(opts)
     opts = opts or {}
     local Size = opts.Size or UDim2.fromOffset(s(620), s(460))
@@ -1201,12 +1261,15 @@ function Library.CreateWindow(opts)
 
     local main = makeGlass(gui, {
         Name = "Main",
+        Class = "CanvasGroup",
         Size = Size,
         Position = UDim2.new(0.5, -Size.X.Offset / 2, 0.5, -Size.Y.Offset / 2),
         Transparency = Style.GlassTransparency,
         Radius = UDim.new(0, s(24)),
         Highlight = 0.82,
     })
+    main.AnchorPoint = Vector2.new(0, 0)
+    main.GroupTransparency = 0
     main.ZIndex = 1
 
     local header = Instance.new("Frame", main)
@@ -1246,40 +1309,17 @@ function Library.CreateWindow(opts)
     infoLabel.TextXAlignment = Enum.TextXAlignment.Left
     infoLabel.BackgroundTransparency = 1
 
-    local closeSize = s(30)
-    local closeBtn = Instance.new("TextButton", header)
-    closeBtn.Name = "Close"
-    closeBtn.Size = UDim2.new(0, closeSize, 0, closeSize)
-    closeBtn.Position = UDim2.new(1, -PAD - closeSize, 0.5, -closeSize / 2)
-    closeBtn.BackgroundTransparency = 1
-    closeBtn.Text = ""
-    closeBtn.AutoButtonColor = false
-    local closeIcon = Instance.new("ImageLabel", closeBtn)
-    closeIcon.Name = "CloseIcon"
-    closeIcon.Size = UDim2.new(0.62, 0, 0.62, 0)
-    closeIcon.Position = UDim2.new(0.19, 0, 0.19, 0)
-    closeIcon.BackgroundTransparency = 1
-    closeIcon.Active = false
-    if not applyIcon(closeIcon, "x") then
-        closeIcon.Visible = false
-        closeBtn.Text = "X"
-        closeBtn.Font = Style.Font
-        closeBtn.TextSize = s(14)
-        closeBtn.TextColor3 = Style.Text
-    end
-    closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
-
     local bodyY = HEADER_H
     local sidebar = Instance.new("Frame", main)
     sidebar.Name = "TabList"
-    sidebar.Size = UDim2.new(0, SIDEBAR_W, 1, -bodyY - PAD)
+    sidebar.Size = UDim2.new(0, SIDEBAR_W, 1, -bodyY - FOOTER_H - PAD)
     sidebar.Position = UDim2.new(0, PAD / 2, 0, bodyY)
     sidebar.BackgroundTransparency = 1
     sidebar.BorderSizePixel = 0
 
     local sep = Instance.new("Frame", main)
     sep.Name = "TabSeparator"
-    sep.Size = UDim2.new(0, 1, 1, -bodyY - PAD)
+    sep.Size = UDim2.new(0, 1, 1, -bodyY - FOOTER_H - PAD)
     sep.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP / 2, 0, bodyY)
     sep.BackgroundColor3 = Cfg.DividerColor
     sep.BorderSizePixel = 0
@@ -1290,6 +1330,102 @@ function Library.CreateWindow(opts)
     controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, bodyY)
     controlRegion.BackgroundTransparency = 1
     controlRegion.BorderSizePixel = 0
+
+    local footer = Instance.new("Frame", main)
+    footer.Name = "Footer"
+    footer.Size = UDim2.new(0, SIDEBAR_W, 0, FOOTER_H)
+    footer.Position = UDim2.new(0, PAD / 2, 1, -FOOTER_H - PAD)
+    footer.BackgroundTransparency = 1
+    footer.BorderSizePixel = 0
+    footer.ZIndex = 6
+    local footerSep = Instance.new("Frame", footer)
+    footerSep.Name = "FooterSeparator"
+    footerSep.Size = UDim2.new(1, 0, 0, 1)
+    footerSep.Position = UDim2.new(0, 0, 0, 0)
+    footerSep.BackgroundColor3 = Cfg.DividerColor
+    footerSep.BorderSizePixel = 0
+
+    local fbtn = s(26)
+    local function makeFooterButton(name, icon, x, fallback)
+        local b = Instance.new("TextButton", footer)
+        b.Name = name
+        b.Size = UDim2.fromOffset(fbtn, fbtn)
+        b.Position = UDim2.new(0, x, 0.5, -fbtn / 2)
+        b.BackgroundTransparency = 1
+        b.Text = ""
+        b.AutoButtonColor = false
+        b.ZIndex = 7
+        local ic = Instance.new("ImageLabel", b)
+        ic.Name = "Icon"
+        ic.Size = UDim2.new(0.68, 0, 0.68, 0)
+        ic.Position = UDim2.new(0.16, 0, 0.16, 0)
+        ic.BackgroundTransparency = 1
+        ic.Active = false
+        if not applyIcon(ic, icon) then
+            ic.Visible = false
+            b.Text = fallback
+            b.Font = Style.Font
+            b.TextSize = s(13)
+            b.TextColor3 = Style.Text
+        end
+        return b
+    end
+    local fbtnX = s(8)
+    local closeBtn = makeFooterButton("Close", "x", fbtnX, "X")
+    local minBtn = makeFooterButton("Minimize", "minimize", fbtnX + fbtn + s(10), "_")
+
+    local orb = Instance.new("CanvasGroup", gui)
+    orb.Name = "Orb"
+    orb.Size = UDim2.fromOffset(ORB, ORB)
+    orb.Position = UDim2.new(0.5, -Size.X.Offset / 2, 0.5, -Size.Y.Offset / 2)
+    orb.AnchorPoint = Vector2.new(0, 0)
+    orb.BackgroundColor3 = Style.Glass
+    orb.BackgroundTransparency = Style.GlassTransparency
+    orb.GroupTransparency = 1
+    orb.Visible = false
+    orb.ZIndex = 50
+    orb.ClipsDescendants = true
+    local orbCorner = Instance.new("UICorner", orb)
+    orbCorner.CornerRadius = UDim.new(1, 0)
+    local orbGrad = Instance.new("UIGradient", orb)
+    orbGrad.Rotation = 90
+    orbGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Style.GlassTop),
+        ColorSequenceKeypoint.new(1, Style.Glass),
+    })
+    local orbStroke = Instance.new("UIStroke", orb)
+    orbStroke.Color = Style.Stroke
+    orbStroke.Transparency = Style.StrokeTransparency
+    orbStroke.Thickness = 1
+    local orbSheen = Instance.new("Frame", orb)
+    orbSheen.Size = UDim2.fromScale(1, 1)
+    orbSheen.BackgroundColor3 = Color3.new(1, 1, 1)
+    orbSheen.BackgroundTransparency = 1
+    orbSheen.BorderSizePixel = 0
+    orbSheen.Active = false
+    local orbSheenGrad = Instance.new("UIGradient", orbSheen)
+    orbSheenGrad.Rotation = 45
+    orbSheenGrad.Color = ColorSequence.new(Color3.new(1, 1, 1))
+    orbSheenGrad.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.82),
+        NumberSequenceKeypoint.new(0.5, 0.97),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    local orbIcon = Instance.new("ImageLabel", orb)
+    orbIcon.Name = "OrbIcon"
+    orbIcon.Size = UDim2.new(0.56, 0, 0.56, 0)
+    orbIcon.Position = UDim2.new(0.22, 0, 0.22, 0)
+    orbIcon.BackgroundTransparency = 1
+    orbIcon.Active = false
+    orbIcon.ZIndex = 51
+    applyIcon(orbIcon, TitleIcon)
+    local orbHit = Instance.new("TextButton", orb)
+    orbHit.Name = "Hit"
+    orbHit.Size = UDim2.fromScale(1, 1)
+    orbHit.BackgroundTransparency = 1
+    orbHit.Text = ""
+    orbHit.AutoButtonColor = false
+    orbHit.ZIndex = 52
 
     local win = {
         _gui = gui,
@@ -1306,8 +1442,15 @@ function Library.CreateWindow(opts)
         _listening = nil,
         _detail = nil,
         _detailContainer = nil,
+        _backdrop = backdrop,
+        _orb = orb,
+        _collapsed = false,
     }
     setmetatable(win, Library)
+
+    closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+    minBtn.MouseButton1Click:Connect(function() collapse(win) end)
+    orbHit.MouseButton1Click:Connect(function() expand(win) end)
 
     UserInputService.InputBegan:Connect(function(input)
         if not (gui and gui.Parent) then return end
@@ -1349,7 +1492,7 @@ function Library:_fadeIn()
     local function scan(obj)
         for _, c in ipairs(obj:GetDescendants()) do
             if c:GetAttribute("_skipFade") then
-            elseif c:IsA("Frame") or c:IsA("ImageLabel") or c:IsA("ImageButton") then
+            elseif c:IsA("Frame") or c:IsA("CanvasGroup") or c:IsA("ImageLabel") or c:IsA("ImageButton") then
                 c:SetAttribute("_bt", c.BackgroundTransparency)
                 c.BackgroundTransparency = 1
                 table.insert(targets, c)
