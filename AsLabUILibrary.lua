@@ -218,7 +218,6 @@ function Library.CreateWindow(opts)
     local Size = opts.Size or UDim2.fromOffset(s(620), s(460))
     local Title = opts.Title or "我是标题"
     local InfoText = opts.Info or "我是Info"
-    local InfoIcon = opts.InfoIcon
     local LeftText = opts.Left or "我是"
 
     local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -295,18 +294,9 @@ function Library.CreateWindow(opts)
     info.BackgroundTransparency = 1
     info.BorderSizePixel = 0
 
-    local infoIconOffset = 0
-    if InfoIcon then
-        local ic = Instance.new("ImageLabel", info)
-        ic.Size = UDim2.new(0, s(20), 0, s(20))
-        ic.Position = UDim2.new(0, PAD + s(4), 0.5, -s(10))
-        ic.BackgroundTransparency = 1
-        applyIcon(ic, InfoIcon)
-        infoIconOffset = s(32)
-    end
     local infoText = Instance.new("TextLabel", info)
-    infoText.Size = UDim2.new(1, -PAD * 2 - infoIconOffset, 1, 0)
-    infoText.Position = UDim2.new(0, PAD + infoIconOffset, 0, 0)
+    infoText.Size = UDim2.new(1, -PAD * 2, 1, 0)
+    infoText.Position = UDim2.new(0, PAD, 0, 0)
     infoText.Text = InfoText
     infoText.Font = Style.Font
     infoText.TextSize = s(13)

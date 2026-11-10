@@ -6,13 +6,12 @@ local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/WasKK
 -- 可选：提前拉取 Lucide（首次用到图标时也会自动加载）
 Library.PreloadLucide()
 
--- 创建窗口：整体大小由 Size 控制；信息栏图标用 Lucide 的 "info"
+-- 创建窗口：整体大小由 Size 控制
 local Win = Library.CreateWindow({
     Title = "我是标题",
     Left = "我是",
     Size = UDim2.fromOffset(540, 400),
     Info = "我是Info",
-    InfoIcon = "info",
 })
 
 -- 选项卡：竖向，含 Lucide 图标 + 文字
