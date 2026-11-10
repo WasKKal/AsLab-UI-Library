@@ -15,6 +15,35 @@ local TweenService = game:GetService("TweenService")
 local Library = {}
 Library.__index = Library
 
+-- ===================== 整体 UI 比例 =====================
+-- 缩小/放大整体内部比例（仅影响内部元素，窗口外框仍由 CreateWindow 的 Size 控制）
+local SCALE = 0.85
+local function s(n) return n * SCALE end
+
+-- ===================== 主题（Apple 风液态玻璃） =====================
+-- 注意：必须定义在 applyIcon / makeGlass 等使用前，避免 forward-reference 取到 nil。
+local Style = {
+    Glass = Color3.fromRGB(28, 28, 32),       -- 玻璃底色
+    GlassTransparency = 0.72,                  -- 玻璃通透度
+    Stroke = Color3.fromRGB(255, 255, 255),    -- 描边（高光感）
+    StrokeTransparency = 0.82,
+    Radius = UDim.new(0, s(18)),
+    Text = Color3.fromRGB(245, 245, 247),
+    Accent = Color3.fromRGB(0, 122, 255),      -- Apple 蓝
+    ToggleOn = Color3.fromRGB(48, 209, 88),    -- Apple 绿
+    ToggleOff = Color3.fromRGB(120, 120, 128),
+    Font = Enum.Font.Gotham,
+}
+
+-- 布局常量（像素，决定内部比例，整体由 Size 缩放；受 SCALE 控制）
+local SIDEBAR_W = s(72)   -- 左侧选项卡宽度
+local HEADER_H  = s(42)   -- 标题栏高度
+local INFO_H    = s(34)   -- 信息栏高度
+local PAD       = s(10)   -- 外边距
+local GAP       = s(10)   -- 方块间距
+local MIN_BLOCK = s(92)   -- 方块最小边长（用于推算单行数量）
+local PAD_IN    = s(12)   -- 控件区内部边距
+
 -- ===================== 网络请求（多执行环境兼容） =====================
 local function httpGet(url)
     local ok, res = pcall(function()
@@ -99,7 +128,8 @@ local function applyIcon(imageLabel, icon)
         imageLabel.ImageRectOffset = asset.ImageRectOffset
         imageLabel.ImageRectSize = asset.ImageRectSize
     end
-    imageLabel.ImageColor3 = Style.Text
+    -- 兜底：Style 任意情况下都应有值；若异常则回退到安全白
+    imageLabel.ImageColor3 = (Style and Style.Text) or Color3.fromRGB(245, 245, 247)
     imageLabel.ScaleType = Enum.ScaleType.Fit
     return true
 end
@@ -108,29 +138,6 @@ end
 function Library.PreloadLucide()
     return loadLucide() ~= nil
 end
-
--- ===================== 主题（Apple 风液态玻璃） =====================
-local Style = {
-    Glass = Color3.fromRGB(28, 28, 32),       -- 玻璃底色
-    GlassTransparency = 0.72,                  -- 玻璃通透度
-    Stroke = Color3.fromRGB(255, 255, 255),    -- 描边（高光感）
-    StrokeTransparency = 0.82,
-    Radius = UDim.new(0, 18),
-    Text = Color3.fromRGB(245, 245, 247),
-    Accent = Color3.fromRGB(0, 122, 255),      -- Apple 蓝
-    ToggleOn = Color3.fromRGB(48, 209, 88),    -- Apple 绿
-    ToggleOff = Color3.fromRGB(120, 120, 128),
-    Font = Enum.Font.Gotham,
-}
-
--- 布局常量（像素，决定内部比例，整体由 Size 缩放）
-local SIDEBAR_W = 76   -- 左侧选项卡宽度
-local HEADER_H  = 46   -- 标题栏高度
-local INFO_H    = 38   -- 信息栏高度
-local PAD       = 10   -- 外边距
-local GAP       = 10   -- 方块间距
-local MIN_BLOCK = 96   -- 方块最小边长（用于推算单行数量）
-local PAD_IN    = 12   -- 控件区内部边距
 
 -- ===================== 玻璃工厂 =====================
 -- 创建一块液态玻璃；可选带左上角高光（Sheen）。
@@ -182,7 +189,7 @@ end
 -- ===================== 创建窗口 =====================
 function Library.CreateWindow(opts)
     opts = opts or {}
-    local Size = opts.Size or UDim2.fromOffset(560, 420)
+    local Size = opts.Size or UDim2.fromOffset(s(620), s(460))
     local Title = opts.Title or "我是标题"
     local InfoText = opts.Info or "我是Info"
     local InfoIcon = opts.InfoIcon
@@ -200,7 +207,7 @@ function Library.CreateWindow(opts)
         Size = Size,
         Position = UDim2.new(0.5, -Size.X.Offset / 2, 0.5, -Size.Y.Offset / 2),
         Transparency = Style.GlassTransparency,
-        Radius = UDim.new(0, 24),
+        Radius = UDim.new(0, s(24)),
         Highlight = 0.7,
     })
 
@@ -212,39 +219,41 @@ function Library.CreateWindow(opts)
     header.BorderSizePixel = 0
 
     local leftLabel = Instance.new("TextLabel", header)
-    leftLabel.Size = UDim2.new(0, 80, 1, 0)
+    leftLabel.Size = UDim2.new(0, s(80), 1, 0)
     leftLabel.Position = UDim2.new(0, PAD, 0, 0)
     leftLabel.Text = LeftText
     leftLabel.Font = Style.Font
-    leftLabel.TextSize = 16
+    leftLabel.TextSize = s(15)
     leftLabel.TextColor3 = Style.Text
     leftLabel.TextXAlignment = Enum.TextXAlignment.Left
     leftLabel.BackgroundTransparency = 1
 
     local titleLabel = Instance.new("TextLabel", header)
-    titleLabel.Size = UDim2.new(1, -210, 1, 0)
-    titleLabel.Position = UDim2.new(0, 95, 0, 0)
+    titleLabel.Size = UDim2.new(1, -s(210), 1, 0)
+    titleLabel.Position = UDim2.new(0, s(95), 0, 0)
     titleLabel.Text = Title
     titleLabel.Font = Style.Font
-    titleLabel.TextSize = 19
+    titleLabel.TextSize = s(18)
     titleLabel.TextColor3 = Style.Text
     titleLabel.TextXAlignment = Enum.TextXAlignment.Center
     titleLabel.BackgroundTransparency = 1
 
+    -- ---- 关闭按钮（圆形） ----
+    local closeSize = s(30)
     local closeBtn = makeGlass(header, {
         Name = "Close",
         Class = "TextButton",
-        Size = UDim2.new(0, 64, 0, 30),
-        Position = UDim2.new(1, -PAD - 64, 0.5, -15),
+        Size = UDim2.new(0, closeSize, 0, closeSize),
+        Position = UDim2.new(1, -PAD - closeSize, 0.5, -closeSize / 2),
         Transparency = 0.6,
-        Radius = UDim.new(0, 10),
+        Radius = UDim.new(1, 0),  -- 1,0 = 正圆
         Highlight = 0.85,
     })
     local closeTxt = Instance.new("TextLabel", closeBtn)
     closeTxt.Size = UDim2.fromScale(1, 1)
     closeTxt.Text = "关闭"
     closeTxt.Font = Style.Font
-    closeTxt.TextSize = 14
+    closeTxt.TextSize = s(11)
     closeTxt.TextColor3 = Style.Text
     closeTxt.BackgroundTransparency = 1
     closeTxt.Active = false
@@ -263,18 +272,18 @@ function Library.CreateWindow(opts)
     local infoIconOffset = 0
     if InfoIcon then
         local ic = Instance.new("ImageLabel", info)
-        ic.Size = UDim2.new(0, 22, 0, 22)
-        ic.Position = UDim2.new(0, PAD + 4, 0.5, -11)
+        ic.Size = UDim2.new(0, s(20), 0, s(20))
+        ic.Position = UDim2.new(0, PAD + s(4), 0.5, -s(10))
         ic.BackgroundTransparency = 1
         applyIcon(ic, InfoIcon)
-        infoIconOffset = 34
+        infoIconOffset = s(32)
     end
     local infoText = Instance.new("TextLabel", info)
     infoText.Size = UDim2.new(1, -PAD * 2 - infoIconOffset, 1, 0)
     infoText.Position = UDim2.new(0, PAD + infoIconOffset, 0, 0)
     infoText.Text = InfoText
     infoText.Font = Style.Font
-    infoText.TextSize = 14
+    infoText.TextSize = s(13)
     infoText.TextColor3 = Style.Text
     infoText.TextXAlignment = Enum.TextXAlignment.Left
     infoText.BackgroundTransparency = 1
@@ -377,30 +386,30 @@ end
 -- ===================== 选项卡 =====================
 function Library:AddTab(name, icon)
     local idx = #self._tabs + 1
-    local btnH = 66
+    local btnH = s(58)
     local btn = makeGlass(self._sidebar, {
         Name = "Tab_" .. name,
         Class = "TextButton",
         Size = UDim2.new(1, -PAD, 0, btnH),
         Position = UDim2.new(0, PAD / 2, 0, PAD + (idx - 1) * (btnH + PAD / 2)),
         Transparency = 0.7,
-        Radius = UDim.new(0, 14),
+        Radius = UDim.new(0, s(14)),
         Highlight = 0.85,
     })
 
     if icon then
         local ic = Instance.new("ImageLabel", btn)
-        ic.Size = UDim2.new(0, 26, 0, 26)
-        ic.Position = UDim2.new(0.5, -13, 0, 8)
+        ic.Size = UDim2.new(0, s(24), 0, s(24))
+        ic.Position = UDim2.new(0.5, -s(12), 0, s(8))
         ic.BackgroundTransparency = 1
         ic.Active = false
         applyIcon(ic, icon)
         local tx = Instance.new("TextLabel", btn)
-        tx.Size = UDim2.new(1, 0, 0, 18)
-        tx.Position = UDim2.new(0, 0, 0, 40)
+        tx.Size = UDim2.new(1, 0, 0, s(18))
+        tx.Position = UDim2.new(0, 0, 0, s(38))
         tx.Text = name
         tx.Font = Style.Font
-        tx.TextSize = 12
+        tx.TextSize = s(11)
         tx.TextColor3 = Style.Text
         tx.TextXAlignment = Enum.TextXAlignment.Center
         tx.BackgroundTransparency = 1
@@ -410,7 +419,7 @@ function Library:AddTab(name, icon)
         tx.Size = UDim2.new(1, 0, 1, 0)
         tx.Text = name
         tx.Font = Style.Font
-        tx.TextSize = 13
+        tx.TextSize = s(12)
         tx.TextColor3 = Style.Text
         tx.TextXAlignment = Enum.TextXAlignment.Center
         tx.BackgroundTransparency = 1
@@ -482,7 +491,7 @@ local function addControl(tab, kind, opts)
         Size = UDim2.new(0, 100, 0, 100), -- 占位，relayout 会重设
         Position = UDim2.new(0, 0, 0, 0),
         Transparency = 0.55,
-        Radius = UDim.new(0, 16),
+        Radius = UDim.new(0, s(16)),
         Highlight = 0.82,
     })
 
@@ -499,11 +508,11 @@ local function addControl(tab, kind, opts)
         applyIcon(ic, opts.Icon)
         local tx = Instance.new("TextLabel", block)
         tx.Name = "Title"
-        tx.Size = UDim2.new(1, -8, 0, 20)
+        tx.Size = UDim2.new(1, -8, 0, s(20))
         tx.Position = UDim2.new(0, 4, 0.72, 0)
         tx.Text = opts.Title or ""
         tx.Font = Style.Font
-        tx.TextSize = 13
+        tx.TextSize = s(12)
         tx.TextColor3 = Style.Text
         tx.TextXAlignment = Enum.TextXAlignment.Center
         tx.BackgroundTransparency = 1
@@ -516,7 +525,7 @@ local function addControl(tab, kind, opts)
         tx.Position = UDim2.new(0, 4, 0, 4)
         tx.Text = opts.Title or ""
         tx.Font = Style.Font
-        tx.TextSize = 14
+        tx.TextSize = s(13)
         tx.TextColor3 = Style.Text
         tx.TextXAlignment = Enum.TextXAlignment.Center
         tx.TextYAlignment = Enum.TextYAlignment.Center

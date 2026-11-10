@@ -10,7 +10,7 @@ Library.PreloadLucide()
 local Win = Library.CreateWindow({
     Title = "我是标题",
     Left = "我是",
-    Size = UDim2.fromOffset(620, 460),
+    Size = UDim2.fromOffset(540, 400),
     Info = "我是Info",
     InfoIcon = "info",
 })
