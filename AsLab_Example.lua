@@ -2,7 +2,7 @@
 -- 演示：标题栏 / 信息栏 / 竖向选项卡（Lucide 图标）/ Toggle 与 Button 方块（带图标与不带图标）
 -- 图标参数接受 Lucide 图标名（如 "settings"）或直接资源地址（http(s)://、rbxasset:// 等）
 
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/AsLabUILibrary.lua"))()
+local Library = loadstring(game:HttpGet("https://ghfast.top/https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/AsLabUILibrary.lua"))()
 -- 可选：提前拉取 Lucide（首次用到图标时也会自动加载）
 Library.PreloadLucide()
 
