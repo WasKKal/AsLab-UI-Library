@@ -183,6 +183,32 @@ local function makeGlass(parent, props)
         NumberSequenceKeypoint.new(1, 1),
     })
 
+    -- 角玻璃高光：左上角高光斑（光在玻璃角上反射），用径向渐变把亮点推到角落
+    local hlAlpha = props.Highlight or 0.82
+    local corner = Instance.new("Frame", f)
+    corner.Name = "Corner"
+    corner.Size = UDim2.new(0.55, 0, 0.55, 0)
+    corner.Position = UDim2.new(0, 0, 0, 0)
+    corner.BackgroundColor3 = Color3.new(1, 1, 1)
+    corner.BackgroundTransparency = 0
+    corner.BorderSizePixel = 0
+    corner.Active = false
+    corner.ZIndex = (f.ZIndex or 1)
+    local cc = Instance.new("UICorner", corner)
+    cc.CornerRadius = UDim.new(1, 0)  -- 圆形高光斑
+    local cg = Instance.new("UIGradient", corner)
+    cg.Color = ColorSequence.new(Color3.new(1, 1, 1))
+    cg.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, hlAlpha),          -- 角上最亮
+        NumberSequenceKeypoint.new(0.55, 0.9),           -- 快速衰减
+        NumberSequenceKeypoint.new(1, 1),                -- 边缘完全透明
+    })
+    -- 径向渐变把高光聚集在角落；旧端不支持则忽略，回退为线性（仍可见）
+    pcall(function()
+        cg.GradientStyle = Enum.GradientStyle.Radial
+        cg.Offset = Vector2.new(-0.4, -0.4)  -- 把径向中心推向左上角
+    end)
+
     return f
 end
 
