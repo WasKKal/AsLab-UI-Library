@@ -30,11 +30,30 @@ local Style = {
     StrokeTransparency = 0.72,
     Radius = UDim.new(0, s(18)),
     Text = Color3.fromRGB(245, 245, 247),
-    Font = Enum.Font.Gotham,
-    -- Toggle 开启态：方块背景银白、图标/文字变黑（平滑过渡）
-    ToggleSilver = Color3.fromRGB(228, 230, 236),
-    ToggleDark = Color3.fromRGB(22, 22, 26),
+    Font = Enum.Font.Gotham,                   -- 占位；下方统一替换为新字体（改这里即可换字体）
+    -- 银白渐变（Toggle 开启态 / 选项卡选中指示器共用）
+    SilverTop = Color3.fromRGB(252, 253, 255),
+    SilverBottom = Color3.fromRGB(196, 201, 212),
+    SilverTransparency = 0.12,                 -- 开启态银白渐变层不透明度（静态，不闪烁）
+    ActiveText = Color3.fromRGB(24, 25, 30),   -- 银白底上的深色文字/图标
+    -- 方块边框
+    BlockStroke = Color3.fromRGB(180, 186, 200),
+    BlockStrokeTransparency = 0.35,
+    BlockStrokeThickness = 1.4,
 }
+
+-- 统一字体入口：优先 BuilderSans（最接近 Apple SF 的现代无衬线），旧端自动回退 Montserrat / Gotham。
+-- 想换字体只改这里一行（例如 Enum.Font.GothamBold / Enum.Font.Montserrat）。
+do
+    local function pickFont()
+        local ok, f = pcall(function() return Enum.Font.BuilderSans end)
+        if ok and f then return f end
+        ok, f = pcall(function() return Enum.Font.Montserrat end)
+        if ok and f then return f end
+        return nil
+    end
+    Style.Font = pickFont() or Style.Font
+end
 
 -- ===================== 选项卡区域（结构照抄 DynamicCowUI 的常量） =====================
 local Cfg = {
@@ -47,11 +66,11 @@ local Cfg = {
     TabTextSize = 15,
     TabTextGap = 8,
     TabRowPadX = 6,
-    TabActiveColor = Color3.fromRGB(255, 255, 255),
+    TabActiveColor = Color3.fromRGB(24, 25, 30),   -- 银白渐变底上的深色文字/图标
     TabInactiveColor = Color3.fromRGB(150, 152, 162),
     TabSelFill = Color3.fromRGB(34, 34, 42),
     TabSelFillTransparency = 0.15,
-    TabSelStroke = Color3.new(1, 1, 1),
+    TabSelStroke = Color3.fromRGB(120, 126, 140),  -- 银白渐变底上的柔和轮廓
     TabSelStrokeThickness = 1,
     TabSelCorner = UDim.new(0, s(8)),
     TabSelFadeTime = 0.18,
@@ -208,10 +227,14 @@ local function makeGlass(parent, props)
     end
 
     -- 轮廓高光（rim light）：细亮描边，液态玻璃的边框光
-    local stroke = Instance.new("UIStroke", f)
-    stroke.Color = Style.Stroke
-    stroke.Transparency = props.StrokeTransparency or Style.StrokeTransparency
-    stroke.Thickness = 1
+    -- NoStroke=true（控件方块）：跳过外描边，改由内部专用边框 Frame 绘制，
+    -- 避免 Border 模式的 UIStroke 被 ClipsDescendants=true 裁掉而看不见。
+    if not props.NoStroke then
+        local stroke = Instance.new("UIStroke", f)
+        stroke.Color = Style.Stroke
+        stroke.Transparency = props.StrokeTransparency or Style.StrokeTransparency
+        stroke.Thickness = 1
+    end
 
     -- 角落微光：整面柔和对角渐变，左上角一抹微光（透明度高、无刺眼亮斑）
     local sheen = Instance.new("Frame", f)
@@ -245,16 +268,19 @@ local function relayout(tab)
     for i, ctrl in ipairs(tab._controls) do
         local col = (i - 1) % n
         local row = math.floor((i - 1) / n)
+        -- AnchorPoint=(0.5,0.5)：Position 用方块中心，UIScale 缩放才会朝中心收缩而非左上角
         ctrl._block.Size = UDim2.new(0, side, 0, side)
-        ctrl._block.Position = UDim2.new(0, col * (side + GAP), 0, row * (side + GAP))
+        ctrl._block.Position = UDim2.new(0, col * (side + GAP) + side / 2, 0, row * (side + GAP) + side / 2)
     end
 end
 
--- Toggle 状态外观：开启时方块背景平滑变银白、图标/文字平滑变黑；关闭时平滑还原
+-- Toggle 状态外观：开启时显现「静态银白渐变」层 + 图标/文字平滑变黑；关闭时平滑还原
+-- 渐变层本身是一张固定的 UIGradient（静态质感，不闪烁、不做颜色动画），
+-- 用 BackgroundTransparency 平滑淡入淡出，取代之前单调的纯银白 BackgroundColor3。
 local function refreshToggle(ctrl, animate)
     local st = ctrl._state
-    local bg = st and Style.ToggleSilver or Style.Glass
-    local fg = st and Style.ToggleDark or Style.Text
+    local bgT = st and Style.SilverTransparency or 1
+    local fg = st and Style.ActiveText or Style.Text
     local ti = animate and TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out) or nil
     local function tw(obj, prop, val)
         if not (obj and obj.Parent) then return end
@@ -264,7 +290,7 @@ local function refreshToggle(ctrl, animate)
             obj[prop] = val
         end
     end
-    tw(ctrl._block, "BackgroundColor3", bg)
+    tw(ctrl._silver, "BackgroundTransparency", bgT)
     if ctrl._icon then tw(ctrl._icon, "ImageColor3", fg) end
     if ctrl._title then tw(ctrl._title, "TextColor3", fg) end
 end
@@ -317,19 +343,41 @@ end
 local function addControl(tab, kind, opts)
     opts = opts or {}
 
-    -- Plain=true：不加竖向底渐变，让 BackgroundColor3 可直接被平滑 tween（Toggle 银白切换）
+    -- Plain=true：不加竖向底渐变；NoStroke=true：外描边改由内部边框 Frame 绘制
     local block = makeGlass(tab._container, {
         Name = kind,
         Class = "TextButton",
         Size = UDim2.new(0, 100, 0, 100), -- 占位，relayout 会重设
-        Position = UDim2.new(0, 0, 0, 0),
+        Position = UDim2.new(0, 50, 0, 50),
         Transparency = 0.55,
         Radius = UDim.new(0, s(16)),
         Highlight = 0.86,
         Plain = true,
+        NoStroke = true,
     })
+    -- 以方块中心为缩放锚点：按压缩放（UIScale）向中心收缩
+    block.AnchorPoint = Vector2.new(0.5, 0.5)
 
     local ctrl = { _tab = tab, _kind = kind, _block = block, _opts = opts, _state = opts.Default or false }
+
+    -- 静态银白渐变层：Toggle 开启时显现，关闭时隐藏露出玻璃底
+    -- 用整面 135° UIGradient（银白→浅银灰），是一张固定的静态渐变，不做颜色动画
+    local silver = Instance.new("Frame", block)
+    silver.Name = "Silver"
+    silver.Size = UDim2.fromScale(1, 1)
+    silver.BackgroundColor3 = Color3.new(1, 1, 1)
+    silver.BackgroundTransparency = 1
+    silver.BorderSizePixel = 0
+    silver.Active = false
+    local silverCorner = Instance.new("UICorner", silver)
+    silverCorner.CornerRadius = UDim.new(0, s(16))
+    local silverGrad = Instance.new("UIGradient", silver)
+    silverGrad.Rotation = 135
+    silverGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Style.SilverTop),
+        ColorSequenceKeypoint.new(1, Style.SilverBottom),
+    })
+    ctrl._silver = silver
 
     -- 按压暗层（按下时平滑显现，松开恢复；跳过入场渐显以免与之冲突）
     local press = Instance.new("Frame", block)
@@ -385,6 +433,23 @@ local function addControl(tab, kind, opts)
         tx.Active = false
         ctrl._title = tx
     end
+
+    -- 每个方块一个边框：内缩 1px 的透明 Frame + UIStroke，
+    -- 放在最上层且始终可见，不受 Toggle 银白渐变影响，也不会被 ClipsDescendants 裁掉
+    local border = Instance.new("Frame", block)
+    border.Name = "Border"
+    border.Size = UDim2.new(1, -2, 1, -2)
+    border.Position = UDim2.new(0, 1, 0, 1)
+    border.BackgroundTransparency = 1
+    border.BorderSizePixel = 0
+    border.Active = false
+    local borderCorner = Instance.new("UICorner", border)
+    borderCorner.CornerRadius = UDim.new(0, s(15))
+    local borderStroke = Instance.new("UIStroke", border)
+    borderStroke.Color = Style.BlockStroke
+    borderStroke.Transparency = Style.BlockStrokeTransparency
+    borderStroke.Thickness = Style.BlockStrokeThickness
+    borderStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
     -- Toggle 初始外观（不再有右上角指示球）
     if kind == "Toggle" then
@@ -683,11 +748,12 @@ function Library:AddTab(name, icon)
     selStroke.Transparency = 1
     selStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     selStroke:SetAttribute("_skipFade", true)
+    -- 选中指示器：银白渐变背景（与 Toggle 开启态同款静态银白渐变）
     local selGrad = Instance.new("UIGradient", sel)
     selGrad.Rotation = 135
     selGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(104, 106, 118)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(28, 28, 34)),
+        ColorSequenceKeypoint.new(0, Style.SilverTop),
+        ColorSequenceKeypoint.new(1, Style.SilverBottom),
     })
 
     local hasIcon = (icon ~= nil and icon ~= "")
