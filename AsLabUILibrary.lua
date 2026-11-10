@@ -49,8 +49,9 @@ local Cfg = {
     TabTextSize = 15,
     TabTextGap = 8,
     TabRowPadX = 6,
-    TabActiveColor = Color3.fromRGB(24, 25, 30),
+    TabActiveColor = Color3.fromRGB(0, 0, 0),
     TabInactiveColor = Color3.fromRGB(150, 152, 162),
+    TabColorFadeTime = 0.22,
     TabSelFill = Color3.fromRGB(34, 34, 42),
     TabSelFillTransparency = 0.15,
     TabSelStroke = Color3.fromRGB(120, 126, 140),
@@ -1139,13 +1140,15 @@ function selectTab(win, activeIdx)
     for i, t in ipairs(win._tabs) do
         local active = (i == activeIdx)
         t._container.Visible = active
-        TweenService:Create(t._nameLabel, TweenInfo.new(0.15), {
-            TextColor3 = active and Cfg.TabActiveColor or Cfg.TabInactiveColor,
-        }):Play()
+        local tint = active and Cfg.TabActiveColor or Cfg.TabInactiveColor
+        local ti = TweenInfo.new(Cfg.TabColorFadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        if t._nameTween then pcall(function() t._nameTween:Cancel() end) end
+        t._nameTween = TweenService:Create(t._nameLabel, ti, { TextColor3 = tint })
+        t._nameTween:Play()
         if t._icon then
-            TweenService:Create(t._icon, TweenInfo.new(0.15), {
-                ImageColor3 = active and Cfg.TabActiveColor or Cfg.TabInactiveColor,
-            }):Play()
+            if t._iconTween then pcall(function() t._iconTween:Cancel() end) end
+            t._iconTween = TweenService:Create(t._icon, ti, { ImageColor3 = tint })
+            t._iconTween:Play()
         end
         local sel = t._sel
         if active then
