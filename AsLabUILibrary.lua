@@ -1,8 +1,8 @@
 -- AsLab UI Library
--- 一个 Roblox UI 库：模仿 ImGui 的即时模式体验 + Apple 的液态玻璃视觉风格
+-- 一个 Roblox UI 库：模仿 ImGui 的即时模式体验 + Apple / iOS26 液态玻璃视觉风格
 -- 本文件仅实现以下规格（不含其他扩展）：
 --   1) 入场动画：渐显
---   2) 整体玻璃效果（带角落高光），大小由 CreateWindow 的 Size 控制
+--   2) 整体玻璃效果（雾化液态玻璃 + 角落微光），大小由 CreateWindow 的 Size 控制
 --   3) UI 布局（标题栏 / 信息栏 / 左侧竖向选项卡 / 右侧控件区）
 --   4) 选项卡含 Icon 与文字；右侧控件区仅含 Toggle 与 Button
 --   5) 控件为正方形 + 圆角 + 同款液态玻璃；可选 Icon
@@ -20,13 +20,14 @@ Library.__index = Library
 local SCALE = 0.85
 local function s(n) return n * SCALE end
 
--- ===================== 主题（Apple 风液态玻璃） =====================
+-- ===================== 主题（iOS26 液态玻璃 / Apple 风） =====================
 -- 注意：必须定义在 applyIcon / makeGlass 等使用前，避免 forward-reference 取到 nil。
 local Style = {
-    Glass = Color3.fromRGB(28, 28, 32),       -- 玻璃底色
-    GlassTransparency = 0.72,                  -- 玻璃通透度
-    Stroke = Color3.fromRGB(255, 255, 255),    -- 描边（高光感）
-    StrokeTransparency = 0.82,
+    Glass = Color3.fromRGB(28, 28, 34),        -- 玻璃底色（暗态液态玻璃）
+    GlassTop = Color3.fromRGB(46, 46, 54),     -- 顶部略亮，营造磨砂景深
+    GlassTransparency = 0.62,                  -- 玻璃通透度（雾化感）
+    Stroke = Color3.fromRGB(255, 255, 255),    -- 轮廓高光（rim light）
+    StrokeTransparency = 0.72,
     Radius = UDim.new(0, s(18)),
     Text = Color3.fromRGB(245, 245, 247),
     Accent = Color3.fromRGB(0, 122, 255),      -- Apple 蓝
@@ -139,9 +140,21 @@ function Library.PreloadLucide()
     return loadLucide() ~= nil
 end
 
--- ===================== 玻璃工厂 =====================
--- 创建一块液态玻璃；可选带左上角高光（Sheen）。
+-- ===================== GUI 挂载点（参考 DynamicCow：优先 gethui） =====================
+local function getHolder()
+    local ok, h = pcall(function() return gethui() end)
+    if ok and h then return h end
+    ok, h = pcall(function() return game:GetService("CoreGui") end)
+    if ok and h then return h end
+    local ok2, pg = pcall(function() return Players.LocalPlayer:WaitForChild("PlayerGui", 5) end)
+    if ok2 and pg then return pg end
+    return nil
+end
+
+-- ===================== 玻璃工厂（iOS26 液态玻璃 / 雾化 + 角落微光） =====================
+-- 创建一块液态玻璃；可选带角落微光（Sheen）。
 -- props.Class 允许覆盖为 TextButton（让方块可点击）。
+-- 关键：使用整面柔和渐变 + 细亮轮廓边（rim），绝不做成刺眼的大块亮斑（sun glare）。
 local function makeGlass(parent, props)
     props = props or {}
     local Class = props.Class or "Frame"
@@ -162,16 +175,25 @@ local function makeGlass(parent, props)
     local corner = Instance.new("UICorner", f)
     corner.CornerRadius = props.Radius or Style.Radius
 
+    -- 雾化景深：整面柔和竖向渐变（顶部略亮），营造磨砂玻璃的层次感
+    local bg = Instance.new("UIGradient", f)
+    bg.Rotation = 90
+    bg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, props.GlassTop or Style.GlassTop),
+        ColorSequenceKeypoint.new(1, props.Color or Style.Glass),
+    })
+
+    -- 轮廓高光（rim light）：细亮描边，液态玻璃的边框光
     local stroke = Instance.new("UIStroke", f)
     stroke.Color = Style.Stroke
-    stroke.Transparency = Style.StrokeTransparency
+    stroke.Transparency = props.StrokeTransparency or Style.StrokeTransparency
     stroke.Thickness = 1
 
-    -- 玻璃光泽 + 角落高光：左上区域白色渐隐
+    -- 角落微光：整面柔和对角渐变，左上角一抹微光（透明度高、无刺眼亮斑）
     local sheen = Instance.new("Frame", f)
     sheen.Name = "Sheen"
-    sheen.Size = UDim2.new(0.7, 0, 0.7, 0)
-    sheen.Position = UDim2.new(0, 0, 0, 0)
+    sheen.Size = UDim2.fromScale(1, 1)
+    sheen.BackgroundColor3 = Color3.new(1, 1, 1)
     sheen.BackgroundTransparency = 1
     sheen.BorderSizePixel = 0
     sheen.Active = false
@@ -179,37 +201,125 @@ local function makeGlass(parent, props)
     sg.Rotation = 45
     sg.Color = ColorSequence.new(Color3.new(1, 1, 1))
     sg.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, props.Highlight or 0.78),
-        NumberSequenceKeypoint.new(1, 1),
+        NumberSequenceKeypoint.new(0, props.Highlight or 0.9),   -- 左上角一抹微光
+        NumberSequenceKeypoint.new(0.5, 0.97),
+        NumberSequenceKeypoint.new(1, 1),                         -- 边缘完全透明
     })
-
-    -- 角玻璃高光：左上角高光斑（光在玻璃角上反射），用径向渐变把亮点推到角落
-    local hlAlpha = props.Highlight or 0.82
-    local corner = Instance.new("Frame", f)
-    corner.Name = "Corner"
-    corner.Size = UDim2.new(0.55, 0, 0.55, 0)
-    corner.Position = UDim2.new(0, 0, 0, 0)
-    corner.BackgroundColor3 = Color3.new(1, 1, 1)
-    corner.BackgroundTransparency = 0
-    corner.BorderSizePixel = 0
-    corner.Active = false
-    corner.ZIndex = (f.ZIndex or 1)
-    local cc = Instance.new("UICorner", corner)
-    cc.CornerRadius = UDim.new(1, 0)  -- 圆形高光斑
-    local cg = Instance.new("UIGradient", corner)
-    cg.Color = ColorSequence.new(Color3.new(1, 1, 1))
-    cg.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, hlAlpha),          -- 角上最亮
-        NumberSequenceKeypoint.new(0.55, 0.9),           -- 快速衰减
-        NumberSequenceKeypoint.new(1, 1),                -- 边缘完全透明
-    })
-    -- 径向渐变把高光聚集在角落；旧端不支持则忽略，回退为线性（仍可见）
-    pcall(function()
-        cg.GradientStyle = Enum.GradientStyle.Radial
-        cg.Offset = Vector2.new(-0.4, -0.4)  -- 把径向中心推向左上角
-    end)
 
     return f
+end
+
+-- ===================== 控件布局辅助（前置定义，避免 forward-reference 取到 nil） =====================
+-- 按窗口大小推算单行数量（1~3）与方块边长（正方形比例）。
+local function relayout(tab)
+    local win = tab._win
+    local areaW = win._sizeX - SIDEBAR_W - PAD_IN * 2
+    local n = math.min(3, math.max(1, math.floor((areaW + GAP) / (MIN_BLOCK + GAP))))
+    local side = (areaW - GAP * (n - 1)) / n
+
+    for i, ctrl in ipairs(tab._controls) do
+        local col = (i - 1) % n
+        local row = math.floor((i - 1) / n)
+        ctrl._block.Size = UDim2.new(0, side, 0, side)
+        ctrl._block.Position = UDim2.new(0, col * (side + GAP), 0, row * (side + GAP))
+    end
+end
+
+local function refreshToggle(ctrl)
+    if ctrl._ind then
+        ctrl._ind.BackgroundColor3 = ctrl._state and Style.ToggleOn or Style.ToggleOff
+    end
+    ctrl._block.BackgroundColor3 = ctrl._state and Style.Accent or Style.Glass
+end
+
+-- kind: "Toggle" | "Button"
+local function addControl(tab, kind, opts)
+    opts = opts or {}
+
+    local block = makeGlass(tab._container, {
+        Name = kind,
+        Class = "TextButton",
+        Size = UDim2.new(0, 100, 0, 100), -- 占位，relayout 会重设
+        Position = UDim2.new(0, 0, 0, 0),
+        Transparency = 0.55,
+        Radius = UDim.new(0, s(16)),
+        Highlight = 0.86,
+    })
+
+    local ctrl = { _tab = tab, _kind = kind, _block = block, _opts = opts, _state = opts.Default or false }
+
+    if opts.Icon then
+        -- 有图标：图标居中稍大，Title 在图标下方
+        local ic = Instance.new("ImageLabel", block)
+        ic.Name = "Icon"
+        ic.Size = UDim2.new(0.46, 0, 0.46, 0)
+        ic.Position = UDim2.new(0.27, 0, 0.16, 0)
+        ic.BackgroundTransparency = 1
+        ic.Active = false
+        applyIcon(ic, opts.Icon)
+        local tx = Instance.new("TextLabel", block)
+        tx.Name = "Title"
+        tx.Size = UDim2.new(1, -8, 0, s(20))
+        tx.Position = UDim2.new(0, 4, 0.72, 0)
+        tx.Text = opts.Title or ""
+        tx.Font = Style.Font
+        tx.TextSize = s(12)
+        tx.TextColor3 = Style.Text
+        tx.TextXAlignment = Enum.TextXAlignment.Center
+        tx.BackgroundTransparency = 1
+        tx.Active = false
+    else
+        -- 无图标：文字居中方块
+        local tx = Instance.new("TextLabel", block)
+        tx.Name = "Title"
+        tx.Size = UDim2.new(1, -8, 1, -8)
+        tx.Position = UDim2.new(0, 4, 0, 4)
+        tx.Text = opts.Title or ""
+        tx.Font = Style.Font
+        tx.TextSize = s(13)
+        tx.TextColor3 = Style.Text
+        tx.TextXAlignment = Enum.TextXAlignment.Center
+        tx.TextYAlignment = Enum.TextYAlignment.Center
+        tx.BackgroundTransparency = 1
+        tx.Active = false
+    end
+
+    if kind == "Toggle" then
+        local ind = Instance.new("Frame", block)
+        ind.Name = "State"
+        ind.Size = UDim2.new(0.22, 0, 0.22, 0)
+        ind.Position = UDim2.new(0.72, 0, 0.06, 0)
+        ind.BackgroundColor3 = Style.ToggleOff
+        ind.BackgroundTransparency = 0.25
+        ind.BorderSizePixel = 0
+        ind.Active = false
+        local ic = Instance.new("UICorner", ind)
+        ic.CornerRadius = UDim.new(1, 0)
+        ctrl._ind = ind
+        refreshToggle(ctrl)
+    end
+
+    block.MouseButton1Click:Connect(function()
+        if kind == "Toggle" then
+            ctrl._state = not ctrl._state
+            refreshToggle(ctrl)
+            if opts.Callback then pcall(opts.Callback, ctrl._state) end
+        else
+            if opts.Callback then pcall(opts.Callback) end
+        end
+    end)
+
+    table.insert(tab._controls, ctrl)
+    relayout(tab)
+    return ctrl
+end
+
+function selectTab(win, tab)
+    for _, t in ipairs(win._tabs) do
+        t._container.Visible = (t == tab)
+        t._button.BackgroundTransparency = (t == tab) and 0.3 or 0.7
+    end
+    win._selected = tab
 end
 
 -- ===================== 创建窗口 =====================
@@ -220,21 +330,34 @@ function Library.CreateWindow(opts)
     local InfoText = opts.Info or "我是Info"
     local LeftText = opts.Left or "我是"
 
-    local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
-    local gui = Instance.new("ScreenGui", pg)
+    local holder = getHolder()
+    if not holder then return nil end
+
+    local gui = Instance.new("ScreenGui", holder)
     gui.Name = "AsLabUI"
     gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-    -- 主玻璃面板：整体大小完全由 Size 控制
+    -- 暗化背景层（参考 DynamicCow 的 Backdrop），让雾化玻璃更突出
+    local backdrop = Instance.new("Frame", gui)
+    backdrop.Name = "Backdrop"
+    backdrop.Size = UDim2.fromScale(1, 1)
+    backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+    backdrop.BackgroundTransparency = 0.45
+    backdrop.BorderSizePixel = 0
+    backdrop.ZIndex = 0
+
+    -- 主玻璃面板（雾化液态玻璃）：整体大小完全由 Size 控制
     local main = makeGlass(gui, {
         Name = "Main",
         Size = Size,
         Position = UDim2.new(0.5, -Size.X.Offset / 2, 0.5, -Size.Y.Offset / 2),
         Transparency = Style.GlassTransparency,
         Radius = UDim.new(0, s(24)),
-        Highlight = 0.7,
+        Highlight = 0.82,
     })
+    main.ZIndex = 1
 
     -- ---- 标题栏 ----
     local header = Instance.new("Frame", main)
@@ -272,7 +395,7 @@ function Library.CreateWindow(opts)
         Position = UDim2.new(1, -PAD - closeSize, 0.5, -closeSize / 2),
         Transparency = 0.6,
         Radius = UDim.new(1, 0),  -- 1,0 = 正圆
-        Highlight = 0.85,
+        Highlight = 0.88,
     })
     local closeTxt = Instance.new("TextLabel", closeBtn)
     closeTxt.Size = UDim2.fromScale(1, 1)
@@ -286,7 +409,7 @@ function Library.CreateWindow(opts)
         gui:Destroy()
     end)
 
-    -- ---- 信息栏（图标 + 我是Info） ----
+    -- ---- 信息栏（我是Info） ----
     local info = Instance.new("Frame", main)
     info.Name = "InfoBar"
     info.Size = UDim2.new(1, 0, 0, INFO_H)
@@ -410,7 +533,7 @@ function Library:AddTab(name, icon)
         Position = UDim2.new(0, PAD / 2, 0, PAD + (idx - 1) * (btnH + PAD / 2)),
         Transparency = 0.7,
         Radius = UDim.new(0, s(14)),
-        Highlight = 0.85,
+        Highlight = 0.88,
     })
 
     if icon then
@@ -464,119 +587,6 @@ function Library:AddTab(name, icon)
         selectTab(self, tab)
     end
     return tab
-end
-
-function selectTab(win, tab)
-    for _, t in ipairs(win._tabs) do
-        t._container.Visible = (t == tab)
-        t._button.BackgroundTransparency = (t == tab) and 0.3 or 0.7
-    end
-    win._selected = tab
-end
-
--- ===================== 控件布局（正方形方块网格） =====================
--- 按窗口大小推算单行数量（1~3）与方块边长（正方形比例）。
-local function relayout(tab)
-    local win = tab._win
-    local areaW = win._sizeX - SIDEBAR_W - PAD_IN * 2
-    local n = math.min(3, math.max(1, math.floor((areaW + GAP) / (MIN_BLOCK + GAP))))
-    local side = (areaW - GAP * (n - 1)) / n
-
-    for i, ctrl in ipairs(tab._controls) do
-        local col = (i - 1) % n
-        local row = math.floor((i - 1) / n)
-        ctrl._block.Size = UDim2.new(0, side, 0, side)
-        ctrl._block.Position = UDim2.new(0, col * (side + GAP), 0, row * (side + GAP))
-    end
-end
-
-local function refreshToggle(ctrl)
-    if ctrl._ind then
-        ctrl._ind.BackgroundColor3 = ctrl._state and Style.ToggleOn or Style.ToggleOff
-    end
-    ctrl._block.BackgroundColor3 = ctrl._state and Style.Accent or Style.Glass
-end
-
--- kind: "Toggle" | "Button"
-local function addControl(tab, kind, opts)
-    opts = opts or {}
-
-    local block = makeGlass(tab._container, {
-        Name = kind,
-        Class = "TextButton",
-        Size = UDim2.new(0, 100, 0, 100), -- 占位，relayout 会重设
-        Position = UDim2.new(0, 0, 0, 0),
-        Transparency = 0.55,
-        Radius = UDim.new(0, s(16)),
-        Highlight = 0.82,
-    })
-
-    local ctrl = { _tab = tab, _kind = kind, _block = block, _opts = opts, _state = opts.Default or false }
-
-    if opts.Icon then
-        -- 有图标：图标居中稍大，Title 在图标下方
-        local ic = Instance.new("ImageLabel", block)
-        ic.Name = "Icon"
-        ic.Size = UDim2.new(0.46, 0, 0.46, 0)
-        ic.Position = UDim2.new(0.27, 0, 0.16, 0)
-        ic.BackgroundTransparency = 1
-        ic.Active = false
-        applyIcon(ic, opts.Icon)
-        local tx = Instance.new("TextLabel", block)
-        tx.Name = "Title"
-        tx.Size = UDim2.new(1, -8, 0, s(20))
-        tx.Position = UDim2.new(0, 4, 0.72, 0)
-        tx.Text = opts.Title or ""
-        tx.Font = Style.Font
-        tx.TextSize = s(12)
-        tx.TextColor3 = Style.Text
-        tx.TextXAlignment = Enum.TextXAlignment.Center
-        tx.BackgroundTransparency = 1
-        tx.Active = false
-    else
-        -- 无图标：文字居中方块
-        local tx = Instance.new("TextLabel", block)
-        tx.Name = "Title"
-        tx.Size = UDim2.new(1, -8, 1, -8)
-        tx.Position = UDim2.new(0, 4, 0, 4)
-        tx.Text = opts.Title or ""
-        tx.Font = Style.Font
-        tx.TextSize = s(13)
-        tx.TextColor3 = Style.Text
-        tx.TextXAlignment = Enum.TextXAlignment.Center
-        tx.TextYAlignment = Enum.TextYAlignment.Center
-        tx.BackgroundTransparency = 1
-        tx.Active = false
-    end
-
-    if kind == "Toggle" then
-        local ind = Instance.new("Frame", block)
-        ind.Name = "State"
-        ind.Size = UDim2.new(0.22, 0, 0.22, 0)
-        ind.Position = UDim2.new(0.72, 0, 0.06, 0)
-        ind.BackgroundColor3 = Style.ToggleOff
-        ind.BackgroundTransparency = 0.25
-        ind.BorderSizePixel = 0
-        ind.Active = false
-        local ic = Instance.new("UICorner", ind)
-        ic.CornerRadius = UDim.new(1, 0)
-        ctrl._ind = ind
-        refreshToggle(ctrl)
-    end
-
-    block.MouseButton1Click:Connect(function()
-        if kind == "Toggle" then
-            ctrl._state = not ctrl._state
-            refreshToggle(ctrl)
-            if opts.Callback then pcall(opts.Callback, ctrl._state) end
-        else
-            if opts.Callback then pcall(opts.Callback) end
-        end
-    end)
-
-    table.insert(tab._controls, ctrl)
-    relayout(tab)
-    return ctrl
 end
 
 return Library
