@@ -566,25 +566,29 @@ function Library.CreateWindow(opts)
     titleLabel.TextXAlignment = Enum.TextXAlignment.Center
     titleLabel.BackgroundTransparency = 1
 
-    -- ---- 关闭按钮（圆形） ----
+    -- ---- Close button: no glass background, only the Lucide "x" icon ----
     local closeSize = s(30)
-    local closeBtn = makeGlass(header, {
-        Name = "Close",
-        Class = "TextButton",
-        Size = UDim2.new(0, closeSize, 0, closeSize),
-        Position = UDim2.new(1, -PAD - closeSize, 0.5, -closeSize / 2),
-        Transparency = 0.6,
-        Radius = UDim.new(1, 0),  -- 1,0 = 正圆
-        Highlight = 0.88,
-    })
-    local closeTxt = Instance.new("TextLabel", closeBtn)
-    closeTxt.Size = UDim2.fromScale(1, 1)
-    closeTxt.Text = "关闭"
-    closeTxt.Font = Style.Font
-    closeTxt.TextSize = s(11)
-    closeTxt.TextColor3 = Style.Text
-    closeTxt.BackgroundTransparency = 1
-    closeTxt.Active = false
+    local closeBtn = Instance.new("TextButton", header)
+    closeBtn.Name = "Close"
+    closeBtn.Size = UDim2.new(0, closeSize, 0, closeSize)
+    closeBtn.Position = UDim2.new(1, -PAD - closeSize, 0.5, -closeSize / 2)
+    closeBtn.BackgroundTransparency = 1
+    closeBtn.Text = ""
+    closeBtn.AutoButtonColor = false
+    local closeIcon = Instance.new("ImageLabel", closeBtn)
+    closeIcon.Name = "CloseIcon"
+    closeIcon.Size = UDim2.new(0.62, 0, 0.62, 0)
+    closeIcon.Position = UDim2.new(0.19, 0, 0.19, 0)
+    closeIcon.BackgroundTransparency = 1
+    closeIcon.Active = false
+    if not applyIcon(closeIcon, "x") then
+        -- Fallback if the Lucide module cannot be fetched, so the window stays closable
+        closeIcon.Visible = false
+        closeBtn.Text = "X"
+        closeBtn.Font = Style.Font
+        closeBtn.TextSize = s(14)
+        closeBtn.TextColor3 = Style.Text
+    end
     closeBtn.MouseButton1Click:Connect(function()
         gui:Destroy()
     end)
