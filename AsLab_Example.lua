@@ -1,25 +1,17 @@
--- AsLab UI Library - Example
--- Demonstrates: title bar / info bar / vertical tabs (Lucide icons) / Toggle & Button squares (with and without icons)
--- The Icon argument accepts a Lucide icon name (e.g. "settings") or a direct asset URL (http(s)://, rbxasset://, etc.)
-
 local Library = loadstring(game:HttpGet("https://ghfast.top/https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/AsLabUILibrary.lua"))()
--- Optional: preload Lucide (it also loads automatically on first icon use)
 Library.PreloadLucide()
 
--- Create a window: the overall size is controlled by Size
 local Win = Library.CreateWindow({
     Title = "Window Title",
-    Left = "AsLab",
+    TitleIcon = "layout-grid",
     Size = UDim2.fromOffset(540, 400),
     Info = "Info Bar",
 })
 
--- Tabs: vertical, each with a Lucide icon + label
 local TabGeneral = Win:AddTab("General", "settings")
 local TabVisual = Win:AddTab("Appearance", "palette")
 local TabSystem = Win:AddTab("System", "cpu")
 
--- Tab 1: Toggle / Button with icons (icon centered and larger, Title below it)
 TabGeneral:AddToggle({ Title = "Auto Save", Icon = "save", Default = true, Callback = function(v)
     print("Auto Save:", v)
 end })
@@ -32,7 +24,6 @@ TabGeneral:AddToggle({ Title = "Notifications", Icon = "bell", Default = false, 
     print("Notifications:", v)
 end })
 
--- Tab 1 continued: no icon, text centered in the square
 TabGeneral:AddButton({ Title = "Run", Callback = function()
     print("Run button clicked")
 end })
@@ -41,7 +32,14 @@ TabGeneral:AddToggle({ Title = "Debug", Default = false, Callback = function(v)
     print("Debug:", v)
 end })
 
--- Tab 2: appearance related icons
+local Boost = TabGeneral:AddToggle({ Title = "Boost", Icon = "gauge", Default = false, Callback = function(v)
+    print("Boost:", v)
+end })
+
+Boost:AddSlider({ Title = "Speed", Min = 0, Max = 100, Default = 50, Callback = function(v)
+    print("Speed:", v)
+end })
+
 TabVisual:AddToggle({ Title = "Dark Mode", Icon = "moon", Default = true, Callback = function(v)
     print("Dark Mode:", v)
 end })
@@ -54,7 +52,6 @@ TabVisual:AddButton({ Title = "Reset", Icon = "rotate-ccw", Callback = function(
     print("Appearance reset")
 end })
 
--- Tab 3: system related icons
 TabSystem:AddToggle({ Title = "Performance", Icon = "gauge", Default = false, Callback = function(v)
     print("Performance:", v)
 end })
