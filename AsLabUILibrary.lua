@@ -310,12 +310,55 @@ end
 local fadeGroup, slotY, createShortcut, destroyShortcut, startListen
 local buildDetail, addDetailRow, openDetail, closeDetail
 
+local function updateCanvas(win)
+    local sc = win._scroller
+    if not (sc and sc.Parent) then return end
+    local need = win._viewH or 0
+    local areaW = (win._controlW or win._sizeX) - PAD_IN * 2
+    local n = math.min(3, math.max(1, math.floor((areaW + GAP) / (MIN_BLOCK + GAP))))
+    local side = (areaW - GAP * (n - 1)) / n
+    for _, t in ipairs(win._tabs) do
+        local rows = math.ceil(#t._controls / n)
+        local h = PAD_IN * 2 + rows * (side + GAP) + PAD_IN
+        if h > need then need = h end
+    end
+    for _, t in ipairs(win._tabs) do
+        for _, c in ipairs(t._controls) do
+            local cnt = c._detailCount or 0
+            local h = PAD_IN * 2 + DETAIL_TOP + cnt * (ROW_H + ROW_GAP) + PAD_IN
+            if h > need then need = h end
+        end
+    end
+    local w = math.max(1, math.ceil(win._controlW or 0))
+    local h = math.max(1, math.ceil(need))
+    sc.CanvasSize = UDim2.fromOffset(0, h)
+    local innerW = math.max(1, w - PAD_IN * 2)
+    local innerH = math.max(1, h - PAD_IN * 2)
+    for _, t in ipairs(win._tabs) do
+        if t._container then t._container.Size = UDim2.fromOffset(innerW, innerH) end
+        for _, c in ipairs(t._controls) do
+            if c._detailLayer then c._detailLayer.Size = UDim2.fromOffset(innerW, innerH) end
+        end
+    end
+end
+
+local fadeGen = setmetatable({}, { __mode = "k" })
+
 fadeGroup = function(group, target, onDone)
     if not (group and group.Parent) then return end
+    fadeGen[group] = (fadeGen[group] or 0) + 1
+    local gen = fadeGen[group]
     local ti = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     local tw = TweenService:Create(group, ti, { GroupTransparency = target })
     if onDone then tw.Completed:Connect(function() pcall(onDone) end) end
     tw:Play()
+    if target == 0 then
+        task.delay(0.4, function()
+            if group.Parent and fadeGen[group] == gen then
+                group.GroupTransparency = 0
+            end
+        end)
+    end
     return tw
 end
 
@@ -330,6 +373,7 @@ local function relayout(tab)
         ctrl._block.Size = UDim2.new(0, side, 0, side)
         ctrl._block.Position = UDim2.new(0, col * (side + GAP) + side / 2, 0, row * (side + GAP) + side / 2)
     end
+    updateCanvas(win)
 end
 
 local function refreshToggle(ctrl, animate)
@@ -584,13 +628,14 @@ startListen = function(win, ctrl, label)
 end
 
 buildDetail = function(win, ctrl)
-    local layer = Instance.new("CanvasGroup", win._controlRegion)
+    local layer = Instance.new("CanvasGroup", win._scroller)
     layer.Name = "Detail_" .. tostring(ctrl._opts.Title or "")
-    layer.Size = UDim2.new(1, -PAD_IN * 2, 1, -PAD_IN * 2)
-    layer.Position = UDim2.new(0, PAD_IN, 0, PAD_IN)
+    layer.Size = UDim2.fromOffset((win._controlW or win._sizeX) - PAD_IN * 2, (win._viewH or win._sizeY) - PAD_IN * 2)
+    layer.Position = UDim2.fromOffset(PAD_IN, PAD_IN)
     layer.BackgroundTransparency = 1
     layer.GroupTransparency = 1
     layer.Visible = false
+    layer.ClipsDescendants = false
     layer.ZIndex = 5
     ctrl._detailLayer = layer
     ctrl._detailCount = 0
@@ -639,6 +684,7 @@ buildDetail = function(win, ctrl)
         end
     end)
     ctrl._detailCount = 2
+    updateCanvas(win)
 end
 
 addDetailRow = function(win, ctrl, kind, opts)
@@ -646,6 +692,7 @@ addDetailRow = function(win, ctrl, kind, opts)
     local layer = ctrl._detailLayer
     local index = ctrl._detailCount
     ctrl._detailCount = index + 1
+    updateCanvas(win)
     local row = makeRow(layer, index, opts.Title or kind)
 
     if kind == "Slider" then
@@ -1020,6 +1067,7 @@ openDetail = function(win, ctrl)
     layer.Visible = true
     layer.GroupTransparency = 1
     fadeGroup(layer, 0)
+    if win._scroller then win._scroller.CanvasPosition = Vector2.new(0, 0) end
     win._detail = ctrl
 end
 
@@ -1202,6 +1250,7 @@ end
 function selectTab(win, activeIdx)
     if win._detail then closeDetail(win) end
     win._activeTab = activeIdx
+    if win._scroller then win._scroller.CanvasPosition = Vector2.new(0, 0) end
     for i, t in ipairs(win._tabs) do
         local active = (i == activeIdx)
         t._container.Visible = active
@@ -1638,7 +1687,7 @@ function Library:ShowNotify(opts)
 end
 
 local function cancelAnim(win)
-    for _, key in ipairs({ "_mainTween", "_mainFadeTween", "_cornerTween", "_orbTween" }) do
+    for _, key in ipairs({ "_mainTween", "_mainFadeTween", "_cornerTween", "_orbTween", "_fadeTween" }) do
         local tw = win[key]
         if tw then pcall(function() tw:Cancel() end) win[key] = nil end
     end
@@ -1723,6 +1772,7 @@ local function expand(win)
     end)
     task.delay(COLLAPSE_T + 0.02, function()
         if win._panelAnimGen ~= gen then return end
+        if win._main and win._main.Parent then win._main.GroupTransparency = 0 end
         win._panelAnimating = false
         win._panelState = "open"
         flushNotifyQueue(win)
@@ -1808,7 +1858,7 @@ function Library.CreateWindow(opts)
 
     local sep = Instance.new("Frame", main)
     sep.Name = "TabSeparator"
-    sep.Size = UDim2.new(0, 1, 1, -bodyY - FOOTER_H - PAD)
+    sep.Size = UDim2.new(0, 1, 1, -bodyY - FOOTER_H - PAD + 1)
     sep.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP / 2, 0, bodyY)
     sep.BackgroundColor3 = Cfg.DividerColor
     sep.BorderSizePixel = 0
@@ -1821,6 +1871,20 @@ function Library.CreateWindow(opts)
     controlRegion.BorderSizePixel = 0
     controlRegion.ClipsDescendants = false
 
+    local scroller = Instance.new("ScrollingFrame", controlRegion)
+    scroller.Name = "Scroller"
+    scroller.Size = UDim2.fromScale(1, 1)
+    scroller.Position = UDim2.fromOffset(0, 0)
+    scroller.BackgroundTransparency = 1
+    scroller.BorderSizePixel = 0
+    scroller.ScrollBarThickness = s(4)
+    scroller.ScrollBarImageColor3 = Style.Stroke
+    scroller.ScrollBarImageTransparency = 0.7
+    scroller.ScrollingDirection = Enum.ScrollingDirection.Y
+    scroller.CanvasSize = UDim2.fromOffset(0, 0)
+    scroller.ClipsDescendants = true
+    scroller.ZIndex = 2
+
     local footer = Instance.new("Frame", main)
     footer.Name = "Footer"
     footer.Size = UDim2.new(0, SIDEBAR_W, 0, FOOTER_H)
@@ -1830,7 +1894,7 @@ function Library.CreateWindow(opts)
     footer.ZIndex = 6
     local footerSep = Instance.new("Frame", footer)
     footerSep.Name = "FooterSeparator"
-    footerSep.Size = UDim2.new(1, 0, 0, 1)
+    footerSep.Size = UDim2.new(0, SIDEBAR_W + TAB_AREA_GAP / 2 + 1, 0, 1)
     footerSep.Position = UDim2.new(0, 0, 0, 0)
     footerSep.BackgroundColor3 = Cfg.DividerColor
     footerSep.BorderSizePixel = 0
@@ -1840,7 +1904,7 @@ function Library.CreateWindow(opts)
         local b = Instance.new("TextButton", footer)
         b.Name = name
         b.Size = UDim2.fromOffset(fbtn, fbtn)
-        b.Position = UDim2.new(0, x, 0.5, -fbtn / 2)
+        b.Position = UDim2.new(0, x, 0.5, -fbtn / 2 + s(8))
         b.BackgroundTransparency = 1
         b.Text = ""
         b.AutoButtonColor = false
@@ -1950,12 +2014,14 @@ function Library.CreateWindow(opts)
         _mainCorner = main:FindFirstChildOfClass("UICorner"),
         _sidebar = sidebar,
         _controlRegion = controlRegion,
+        _scroller = scroller,
         _tabs = {},
         _activeTab = 0,
         _selected = nil,
         _sizeX = Size.X.Offset,
         _sizeY = Size.Y.Offset,
         _controlW = Size.X.Offset - (PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN),
+        _viewH = Size.Y.Offset - HEADER_H,
         _shortcuts = {},
         _listening = nil,
         _detail = nil,
@@ -1983,6 +2049,8 @@ function Library.CreateWindow(opts)
         _panelAnimating = false,
         _panelAnimGen = 0,
         _collapsed = false,
+        _fadeTween = nil,
+        _fadeGen = 0,
     }
     setmetatable(win, Library)
     Library._activeWindow = win
@@ -2072,80 +2140,36 @@ function Library.CreateWindow(opts)
     return win
 end
 
-local function restoreFade(st)
-    for _, el in ipairs(st.targets) do
-        pcall(function()
-            if el:IsA("UIStroke") then
-                el.Transparency = el:GetAttribute("_st") or 0
-            elseif el:IsA("TextLabel") or el:IsA("TextButton") then
-                el.TextTransparency = el:GetAttribute("_tt") or 0
-            else
-                el.BackgroundTransparency = el:GetAttribute("_bt") or 0
-            end
-        end)
-    end
-end
-
 function Library:_fadeIn()
-    local targets = {}
-    local function scan(obj)
-        for _, c in ipairs(obj:GetDescendants()) do
-            if c:GetAttribute("_skipFade") then
-            elseif c:IsA("Frame") or c:IsA("CanvasGroup") or c:IsA("ImageLabel") or c:IsA("ImageButton") then
-                c:SetAttribute("_bt", c.BackgroundTransparency)
-                c.BackgroundTransparency = 1
-                table.insert(targets, c)
-            elseif c:IsA("TextLabel") or c:IsA("TextButton") then
-                c:SetAttribute("_tt", c.TextTransparency)
-                c.TextTransparency = 1
-                table.insert(targets, c)
-            elseif c:IsA("UIStroke") then
-                c:SetAttribute("_st", c.Transparency)
-                c.Transparency = 1
-                table.insert(targets, c)
-            end
-        end
+    if self._fadeTween then
+        pcall(function() self._fadeTween:Cancel() end)
+        self._fadeTween = nil
     end
-    scan(self._gui)
-
-    local v = Instance.new("NumberValue")
-    v.Value = 1
-    local tween = TweenService:Create(v,
+    self._fadeGen = (self._fadeGen or 0) + 1
+    local gen = self._fadeGen
+    self._main.GroupTransparency = 1
+    local tw = TweenService:Create(self._main,
         TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { Value = 0 })
-    local st = { v = v, tween = tween, targets = targets }
-    self._fadeState = st
-    tween:Play()
-    v.Changed:Connect(function(k)
-        if self._fadeState ~= st then return end
-        for _, el in ipairs(targets) do
-            if el:IsA("UIStroke") then
-                local t = el:GetAttribute("_st") or 0
-                el.Transparency = t + (1 - t) * k
-            elseif el:IsA("TextLabel") or el:IsA("TextButton") then
-                local t = el:GetAttribute("_tt") or 0
-                el.TextTransparency = t + (1 - t) * k
-            else
-                local t = el:GetAttribute("_bt") or 0
-                el.BackgroundTransparency = t + (1 - t) * k
-            end
+        { GroupTransparency = 0 })
+    self._fadeTween = tw
+    tw:Play()
+    task.delay(0.55, function()
+        if self._fadeGen ~= gen then return end
+        if self._main and self._main.Parent then
+            self._main.GroupTransparency = 0
         end
-    end)
-    tween.Completed:Connect(function()
-        if self._fadeState ~= st then return end
-        self._fadeState = nil
-        restoreFade(st)
-        pcall(function() v:Destroy() end)
     end)
 end
 
 function Library:_finishFadeIn()
-    local st = self._fadeState
-    if not st then return end
-    self._fadeState = nil
-    if st.tween then pcall(function() st.tween:Cancel() end) end
-    restoreFade(st)
-    if st.v then pcall(function() st.v:Destroy() end) end
+    self._fadeGen = (self._fadeGen or 0) + 1
+    if self._fadeTween then
+        pcall(function() self._fadeTween:Cancel() end)
+        self._fadeTween = nil
+    end
+    if self._main and self._main.Parent then
+        self._main.GroupTransparency = 0
+    end
 end
 
 function Library:AddTab(name, icon)
@@ -2218,10 +2242,10 @@ function Library:AddTab(name, icon)
         tname.Position = UDim2.new(0, s(Cfg.TabRowPadX), 0, 0)
     end
 
-    local container = Instance.new("CanvasGroup", self._controlRegion)
+    local container = Instance.new("CanvasGroup", self._scroller)
     container.Name = "Container_" .. name
-    container.Size = UDim2.new(1, -PAD_IN * 2, 1, -PAD_IN * 2)
-    container.Position = UDim2.new(0, PAD_IN, 0, PAD_IN)
+    container.Size = UDim2.fromOffset((self._controlW or self._sizeX) - PAD_IN * 2, (self._viewH or self._sizeY) - PAD_IN * 2)
+    container.Position = UDim2.fromOffset(PAD_IN, PAD_IN)
     container.BackgroundTransparency = 1
     container.GroupTransparency = 0
     container.Visible = false
@@ -2240,6 +2264,7 @@ function Library:AddTab(name, icon)
     row.MouseButton1Click:Connect(function() selectTab(self, idx) end)
 
     table.insert(self._tabs, tab)
+    updateCanvas(self)
     if #self._tabs == 1 then selectTab(self, 1) end
     return tab
 end
