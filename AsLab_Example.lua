@@ -80,4 +80,26 @@ ESP:AddToggle({ Title = "Draw Skeleton", Default = false, Callback = function(v)
     print("Draw Skeleton:", v)
 end })
 
+local TabNotify = Win:AddTab("Notify", "bell")
+
+TabNotify:AddButton({ Title = "Single", Icon = "bell", Callback = function()
+    Win:ShowNotify({ Title = "Hello", Info = "This is a short message.", Time = 4 })
+end })
+
+TabNotify:AddButton({ Title = "Stack", Icon = "layers", Callback = function()
+    Win:ShowNotify({ Title = "First", Info = "Short one", Time = 3 })
+    Win:ShowNotify({ Title = "Second", Info = "A longer notification body that wraps after twenty five characters per line", Time = 6 })
+    Win:ShowNotify({ Title = "Third", Info = "Another one", Time = 8 })
+end })
+
+TabNotify:AddButton({ Title = "Long Text", Icon = "align-left", Callback = function()
+    Win:ShowNotify({ Title = "Wrapped Title That Is Also Quite Long Indeed", Info = "The info line wraps automatically when it grows beyond twenty five characters, and the toast grows taller to fit.", Time = 7 })
+end })
+
+game:GetService("UserInputService").InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.N then
+        Win:ShowNotify({ Title = "Key N", Info = "Minimize the window and press N to see the orb capsule", Time = 5 })
+    end
+end)
+
 print("AsLab UI loaded, window fading in...")

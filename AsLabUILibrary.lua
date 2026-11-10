@@ -75,6 +75,10 @@ local HOLD_TIME    = 0.45
 local FOOTER_H     = s(38)
 local ORB          = s(52)
 local COLLAPSE_T   = 0.38
+local NOTIFY_MAXCHARS = 25
+local NOTIFY_MARGIN = s(16)
+local NOTIFY_GAP = s(8)
+local NOTIFY_TIME = 3
 
 local function httpGet(url)
     local ok, res = pcall(function()
@@ -1179,6 +1183,399 @@ function selectTab(win, activeIdx)
     win._selected = win._tabs[activeIdx]
 end
 
+local function utf8Chars(str)
+    str = tostring(str or "")
+    local out = {}
+    local ok = pcall(function()
+        for _, cp in utf8.codes(str) do out[#out + 1] = utf8.char(cp) end
+    end)
+    if not ok or #out == 0 then
+        out = {}
+        for i = 1, #str do out[i] = str:sub(i, i) end
+    end
+    return out
+end
+
+local function wrapLines(str, limit)
+    local chars = utf8Chars(str)
+    local lines, cur, n = {}, {}, 0
+    for _, ch in ipairs(chars) do
+        if ch == "\n" then
+            lines[#lines + 1] = table.concat(cur)
+            cur, n = {}, 0
+        else
+            cur[#cur + 1] = ch
+            n = n + 1
+            if n >= limit then
+                lines[#lines + 1] = table.concat(cur)
+                cur, n = {}, 0
+            end
+        end
+    end
+    if #cur > 0 or #lines == 0 then lines[#lines + 1] = table.concat(cur) end
+    return lines
+end
+
+local function measureText(text, size, font)
+    local ok, sz = pcall(function()
+        return TextService:GetTextSize(text, size, font, Vector2.new(10000, 100))
+    end)
+    if ok and sz then return sz.X end
+    return #tostring(text) * size * 0.55
+end
+
+local function makeBold(label)
+    local done = false
+    pcall(function()
+        local base = Font.fromEnum(Style.Font)
+        label.FontFace = Font.new(base.Family, Enum.FontWeight.Bold, base.Style)
+        done = true
+    end)
+    if not done then
+        pcall(function()
+            label.FontFace = Font.new(Style.Font, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+            done = true
+        end)
+    end
+    if not done then
+        pcall(function() label.Font = Enum.Font.GothamBold end)
+    end
+end
+
+local function viewport()
+    local w, h = 1920, 1080
+    pcall(function()
+        local cam = workspace.CurrentCamera
+        if cam then
+            local v = cam.ViewportSize
+            if v and v.X > 0 and v.Y > 0 then w, h = v.X, v.Y end
+        end
+    end)
+    return w, h
+end
+
+local function screenW(win)
+    local a = 0
+    pcall(function() a = win._gui.AbsoluteSize.X end)
+    if a and a > 0 then return a end
+    return viewport()
+end
+
+local pumpCapsule, pushCapsule, clearCapsule, flushNotifyQueue
+local applyOrbLayout, tweenExt, tweenBlend, bumpOrbGen
+local renderOrbText, typewriter, computeSide, setOrbSide, syncOrbBase
+local reflowToasts, pushToast
+
+applyOrbLayout = function(win)
+    local orb = win._orb
+    if not (orb and orb.Parent) then return end
+    local ext = win._orbExt.Value
+    local blend = win._orbBlend.Value
+    local baseX, baseY = win._orbBaseX, win._orbBaseY
+    local px = baseX - ext * blend
+    orb.Size = UDim2.fromOffset(ORB + ext, ORB)
+    orb.Position = UDim2.fromOffset(px, baseY)
+    local iconOff = ORB * 0.22
+    win._orbIcon.Position = UDim2.fromOffset(baseX + iconOff - px, iconOff)
+    win._orbInfo.Size = UDim2.fromOffset(ext, ORB)
+    win._orbInfo.Position = UDim2.fromOffset(ORB * (1 - blend), 0)
+end
+
+tweenExt = function(win, target, dur, onDone)
+    if win._orbExtTween then pcall(function() win._orbExtTween:Cancel() end) end
+    local gen = win._orbGen
+    local tw = TweenService:Create(win._orbExt,
+        TweenInfo.new(dur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        { Value = target })
+    win._orbExtTween = tw
+    if onDone then
+        tw.Completed:Connect(function()
+            if win._orbGen == gen then pcall(onDone) end
+        end)
+    end
+    tw:Play()
+end
+
+tweenBlend = function(win, target, dur)
+    if win._orbBlendTween then pcall(function() win._orbBlendTween:Cancel() end) end
+    local tw = TweenService:Create(win._orbBlend,
+        TweenInfo.new(dur, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+        { Value = target })
+    win._orbBlendTween = tw
+    tw:Play()
+end
+
+bumpOrbGen = function(win)
+    win._orbGen = (win._orbGen or 0) + 1
+    win._typeGen = (win._typeGen or 0) + 1
+    if win._orbExtTween then
+        pcall(function() win._orbExtTween:Cancel() end)
+        win._orbExtTween = nil
+    end
+end
+
+renderOrbText = function(win, n)
+    local info = win._orbInfo
+    if not (info and info.Parent) then return end
+    local chars = win._orbChars or {}
+    local len = #chars
+    n = math.clamp(math.floor(n or 0), 0, len)
+    if n <= 0 then info.Text = "" return end
+    if win._orbSide == "left" then
+        info.TextXAlignment = Enum.TextXAlignment.Left
+        info.Text = table.concat(chars, "", 1, n)
+    else
+        info.TextXAlignment = Enum.TextXAlignment.Right
+        info.Text = table.concat(chars, "", len - n + 1, len)
+    end
+end
+
+typewriter = function(win, from, to, dur)
+    win._typeGen = (win._typeGen or 0) + 1
+    local my = win._typeGen
+    local span = math.abs(to - from)
+    local step = span > 0 and (dur / span) or 0
+    task.spawn(function()
+        local n = from
+        renderOrbText(win, n)
+        while win._typeGen == my do
+            if to == from or (to > from and n >= to) or (to < from and n <= to) then break end
+            if step > 0 then task.wait(step) end
+            if win._typeGen ~= my then return end
+            n = n + (to > from and 1 or -1)
+            renderOrbText(win, n)
+        end
+    end)
+end
+
+computeSide = function(win)
+    local center = win._orbBaseX + ORB / 2
+    return (center < screenW(win) / 2) and "left" or "right"
+end
+
+setOrbSide = function(win, side)
+    if win._orbSide == side then return end
+    win._orbSide = side
+    tweenBlend(win, side == "left" and 0 or 1, 0.24)
+    if win._capsuleActive and not win._orbEnding and win._orbChars then
+        typewriter(win, 0, #win._orbChars, math.min(0.6, 0.03 * #win._orbChars + 0.12))
+    end
+end
+
+syncOrbBase = function(win)
+    pcall(function()
+        local a = win._gui.AbsoluteSize
+        if a and a.X > 0 then
+            local p = win._main.AbsolutePosition
+            if p then win._orbBaseX, win._orbBaseY = p.X, p.Y end
+        end
+    end)
+    win._orbSide = computeSide(win)
+    win._orbBlend.Value = win._orbSide == "left" and 0 or 1
+    applyOrbLayout(win)
+end
+
+local function showCapsule(win, opts, onDone)
+    local info = tostring(opts.Info or "")
+    local dur = tonumber(opts.Time) or NOTIFY_TIME
+    bumpOrbGen(win)
+    local myGen = win._orbGen
+    win._orbEnding = false
+    win._orbChars = utf8Chars(info)
+    local size = s(13)
+    win._orbInfo.TextSize = size
+    win._orbInfo.Font = Style.Font
+    win._orbInfo.TextColor3 = Style.Text
+    win._orbInfo.TextWrapped = false
+    win._orbInfo.TextTruncate = Enum.TextTruncate.AtEnd
+    win._orbInfo.TextYAlignment = Enum.TextYAlignment.Center
+    renderOrbText(win, 0)
+    local textW = measureText(info, size, Style.Font)
+    local avail = win._orbSide == "left"
+        and (screenW(win) - (win._orbBaseX + ORB) - s(16))
+        or (win._orbBaseX - s(16))
+    local target = math.max(s(52), math.min(textW + s(26), math.max(s(52), avail)))
+    tweenExt(win, target, 0.32)
+    typewriter(win, 0, #win._orbChars, math.min(0.75, 0.032 * #win._orbChars + 0.12))
+    task.delay(math.max(0.2, dur), function()
+        if win._orbGen ~= myGen then return end
+        win._orbEnding = true
+        typewriter(win, #win._orbChars, 0, 0.26)
+        tweenExt(win, 0, 0.3, function()
+            renderOrbText(win, 0)
+            if onDone then pcall(onDone) end
+        end)
+    end)
+end
+
+pumpCapsule = function(win)
+    local opts = table.remove(win._capsuleQueue, 1)
+    if not opts then
+        win._capsuleActive = false
+        win._capsuleCurrent = nil
+        return
+    end
+    win._capsuleActive = true
+    win._capsuleCurrent = opts
+    showCapsule(win, opts, function()
+        win._capsuleCurrent = nil
+        pumpCapsule(win)
+    end)
+end
+
+pushCapsule = function(win, opts)
+    table.insert(win._capsuleQueue, opts)
+    if not win._capsuleActive then pumpCapsule(win) end
+end
+
+clearCapsule = function(win, requeue)
+    bumpOrbGen(win)
+    if requeue then
+        if win._capsuleActive and win._capsuleCurrent then
+            table.insert(win._notifyQueue, win._capsuleCurrent)
+        end
+        for _, o in ipairs(win._capsuleQueue) do table.insert(win._notifyQueue, o) end
+        win._capsuleQueue = {}
+    end
+    win._capsuleActive = false
+    win._capsuleCurrent = nil
+    win._orbEnding = false
+    renderOrbText(win, 0)
+    tweenExt(win, 0, 0.2)
+end
+
+reflowToasts = function(win)
+    local y = NOTIFY_MARGIN
+    for _, it in ipairs(win._toasts) do
+        if it.frame and it.frame.Parent and not it._entering then
+            TweenService:Create(it.frame,
+                TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                { Position = UDim2.fromOffset(NOTIFY_MARGIN, y) }):Play()
+        end
+        y = y + it.h + NOTIFY_GAP
+    end
+end
+
+pushToast = function(win, opts)
+    local Title = tostring(opts.Title or "")
+    local Info = tostring(opts.Info or "")
+    local dur = tonumber(opts.Time) or NOTIFY_TIME
+    local titleLines = wrapLines(Title, NOTIFY_MAXCHARS)
+    local infoLines = wrapLines(Info, NOTIFY_MAXCHARS)
+    local tSize, iSize = s(15), s(12)
+    local maxW = 0
+    for _, l in ipairs(titleLines) do
+        maxW = math.max(maxW, measureText(l, tSize, Style.Font) + s(8))
+    end
+    for _, l in ipairs(infoLines) do
+        maxW = math.max(maxW, measureText(l, iSize, Style.Font))
+    end
+    local padX, padY = s(14), s(10)
+    local w = math.max(s(120), maxW + padX * 2)
+    local tH = #titleLines * (tSize + s(4))
+    local iH = #infoLines * (iSize + s(4))
+    local h = padY * 2 + tH + (#infoLines > 0 and (s(4) + iH) or 0)
+    local frame = Instance.new("CanvasGroup", win._gui)
+    frame.Name = "Notify"
+    frame.Size = UDim2.fromOffset(w, h)
+    frame.BackgroundColor3 = Style.Glass
+    frame.BackgroundTransparency = 0.32
+    frame.GroupTransparency = 1
+    frame.BorderSizePixel = 0
+    frame.ZIndex = 60
+    frame.ClipsDescendants = true
+    local corner = Instance.new("UICorner", frame)
+    corner.CornerRadius = UDim.new(0, s(12))
+    local grad = Instance.new("UIGradient", frame)
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Style.GlassTop),
+        ColorSequenceKeypoint.new(1, Style.Glass),
+    })
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = Style.Stroke
+    stroke.Transparency = 0.7
+    stroke.Thickness = 1
+    local tLabel = Instance.new("TextLabel", frame)
+    tLabel.Size = UDim2.fromOffset(w - padX * 2, tH)
+    tLabel.Position = UDim2.fromOffset(padX, padY)
+    tLabel.Text = table.concat(titleLines, "\n")
+    tLabel.Font = Style.Font
+    makeBold(tLabel)
+    tLabel.TextSize = tSize
+    tLabel.TextColor3 = Style.Text
+    tLabel.TextXAlignment = Enum.TextXAlignment.Left
+    tLabel.TextYAlignment = Enum.TextYAlignment.Top
+    tLabel.TextWrapped = false
+    tLabel.BackgroundTransparency = 1
+    tLabel.Active = false
+    tLabel.ZIndex = 2
+    local iLabel = Instance.new("TextLabel", frame)
+    iLabel.Size = UDim2.fromOffset(w - padX * 2, iH)
+    iLabel.Position = UDim2.fromOffset(padX, padY + tH + s(4))
+    iLabel.Text = table.concat(infoLines, "\n")
+    iLabel.Font = Style.Font
+    iLabel.TextSize = iSize
+    iLabel.TextColor3 = Style.SubText
+    iLabel.TextXAlignment = Enum.TextXAlignment.Left
+    iLabel.TextYAlignment = Enum.TextYAlignment.Top
+    iLabel.TextWrapped = false
+    iLabel.BackgroundTransparency = 1
+    iLabel.Active = false
+    iLabel.ZIndex = 2
+    local item = { frame = frame, h = h, _entering = true }
+    table.insert(win._toasts, item)
+    local y = NOTIFY_MARGIN
+    for i = 1, #win._toasts - 1 do
+        local prev = win._toasts[i]
+        y = y + (prev and prev.h or s(40)) + NOTIFY_GAP
+    end
+    frame.Position = UDim2.fromOffset(-w - s(24), y)
+    local enter = TweenService:Create(frame,
+        TweenInfo.new(0.38, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        { Position = UDim2.fromOffset(NOTIFY_MARGIN, y), GroupTransparency = 0 })
+    enter.Completed:Connect(function() item._entering = false end)
+    enter:Play()
+    task.delay(math.max(0.2, dur), function()
+        if not (frame and frame.Parent) then return end
+        local out = TweenService:Create(frame,
+            TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+            { Position = UDim2.fromOffset(-w - s(24), frame.Position.Y.Offset),
+              GroupTransparency = 1 })
+        out:Play()
+        out.Completed:Connect(function()
+            for i, it in ipairs(win._toasts) do
+                if it == item then table.remove(win._toasts, i) break end
+            end
+            if frame.Parent then frame:Destroy() end
+            reflowToasts(win)
+        end)
+    end)
+end
+
+flushNotifyQueue = function(win)
+    while #win._notifyQueue > 0 do
+        local opts = table.remove(win._notifyQueue, 1)
+        if win._panelState == "closed" then
+            pushCapsule(win, opts)
+        else
+            pushToast(win, opts)
+        end
+    end
+end
+
+function Library:ShowNotify(opts)
+    opts = opts or {}
+    local win = self
+    if not (type(win) == "table" and win._gui) then win = Library._activeWindow end
+    if not (win and win._gui and win._gui.Parent) then return end
+    if win._panelAnimating then
+        table.insert(win._notifyQueue, opts)
+        return
+    end
+    if win._panelState == "closed" then pushCapsule(win, opts) else pushToast(win, opts) end
+end
+
 local function cancelAnim(win)
     for _, key in ipairs({ "_mainTween", "_backdropTween", "_orbTween" }) do
         local tw = win[key]
@@ -1189,6 +1586,9 @@ end
 local function collapse(win)
     if win._collapsed then return end
     win._collapsed = true
+    win._panelAnimGen = (win._panelAnimGen or 0) + 1
+    local gen = win._panelAnimGen
+    win._panelAnimating = true
     cancelAnim(win)
     for _, item in ipairs(win._shortcuts) do
         if item.frame and item.frame.Parent then item.frame.Visible = false end
@@ -1202,17 +1602,26 @@ local function collapse(win)
     win._backdropTween = TweenService:Create(win._backdrop, ti, { BackgroundTransparency = 1 })
     win._backdropTween:Play()
     task.delay(COLLAPSE_T + 0.02, function()
+        if win._panelAnimGen ~= gen then return end
         if win._collapsed and win._gui.Parent then
             win._main.Visible = false
             win._orb.Visible = true
             win._orbTween = fadeGroup(win._orb, 0)
+            syncOrbBase(win)
         end
+        win._panelAnimating = false
+        win._panelState = "closed"
+        flushNotifyQueue(win)
     end)
 end
 
 local function expand(win)
     if not win._collapsed then return end
     win._collapsed = false
+    win._panelAnimGen = (win._panelAnimGen or 0) + 1
+    local gen = win._panelAnimGen
+    win._panelAnimating = true
+    clearCapsule(win, true)
     cancelAnim(win)
     win._main.Visible = true
     win._orbTween = fadeGroup(win._orb, 1, function()
@@ -1232,6 +1641,12 @@ local function expand(win)
                 if item.frame and item.frame.Parent then item.frame.Visible = true end
             end
         end
+    end)
+    task.delay(COLLAPSE_T + 0.02, function()
+        if win._panelAnimGen ~= gen then return end
+        win._panelAnimating = false
+        win._panelState = "open"
+        flushNotifyQueue(win)
     end)
 end
 
@@ -1377,7 +1792,10 @@ function Library.CreateWindow(opts)
     local orb = Instance.new("CanvasGroup", gui)
     orb.Name = "Orb"
     orb.Size = UDim2.fromOffset(ORB, ORB)
-    orb.Position = UDim2.new(0.5, -Size.X.Offset / 2, 0.5, -Size.Y.Offset / 2)
+    local vw, vh = viewport()
+    local orbBaseX = vw / 2 - Size.X.Offset / 2
+    local orbBaseY = vh / 2 - Size.Y.Offset / 2
+    orb.Position = UDim2.fromOffset(orbBaseX, orbBaseY)
     orb.AnchorPoint = Vector2.new(0, 0)
     orb.BackgroundColor3 = Style.Glass
     orb.BackgroundTransparency = Style.GlassTransparency
@@ -1386,7 +1804,7 @@ function Library.CreateWindow(opts)
     orb.ZIndex = 50
     orb.ClipsDescendants = true
     local orbCorner = Instance.new("UICorner", orb)
-    orbCorner.CornerRadius = UDim.new(1, 0)
+    orbCorner.CornerRadius = UDim.new(0, ORB / 2)
     local orbGrad = Instance.new("UIGradient", orb)
     orbGrad.Rotation = 90
     orbGrad.Color = ColorSequence.new({
@@ -1413,12 +1831,28 @@ function Library.CreateWindow(opts)
     })
     local orbIcon = Instance.new("ImageLabel", orb)
     orbIcon.Name = "OrbIcon"
-    orbIcon.Size = UDim2.new(0.56, 0, 0.56, 0)
-    orbIcon.Position = UDim2.new(0.22, 0, 0.22, 0)
+    orbIcon.Size = UDim2.fromOffset(ORB * 0.56, ORB * 0.56)
+    orbIcon.Position = UDim2.fromOffset(ORB * 0.22, ORB * 0.22)
     orbIcon.BackgroundTransparency = 1
     orbIcon.Active = false
     orbIcon.ZIndex = 51
     applyIcon(orbIcon, TitleIcon)
+    local orbInfo = Instance.new("TextLabel", orb)
+    orbInfo.Name = "OrbInfo"
+    orbInfo.Size = UDim2.fromOffset(0, ORB)
+    orbInfo.Position = UDim2.fromOffset(ORB, 0)
+    orbInfo.Text = ""
+    orbInfo.Font = Style.Font
+    orbInfo.TextSize = s(13)
+    orbInfo.TextColor3 = Style.Text
+    orbInfo.TextXAlignment = Enum.TextXAlignment.Left
+    orbInfo.TextYAlignment = Enum.TextYAlignment.Center
+    orbInfo.TextWrapped = false
+    orbInfo.TextTruncate = Enum.TextTruncate.AtEnd
+    orbInfo.BackgroundTransparency = 1
+    orbInfo.Active = false
+    orbInfo.ZIndex = 51
+    orbInfo:SetAttribute("_skipFade", true)
     local orbHit = Instance.new("TextButton", orb)
     orbHit.Name = "Hit"
     orbHit.Size = UDim2.fromScale(1, 1)
@@ -1426,6 +1860,13 @@ function Library.CreateWindow(opts)
     orbHit.Text = ""
     orbHit.AutoButtonColor = false
     orbHit.ZIndex = 52
+
+    local orbExt = Instance.new("NumberValue", gui)
+    orbExt.Name = "OrbExt"
+    orbExt.Value = 0
+    local orbBlend = Instance.new("NumberValue", gui)
+    orbBlend.Name = "OrbBlend"
+    orbBlend.Value = (orbBaseX + ORB / 2 < vw / 2) and 0 or 1
 
     local win = {
         _gui = gui,
@@ -1444,13 +1885,76 @@ function Library.CreateWindow(opts)
         _detailContainer = nil,
         _backdrop = backdrop,
         _orb = orb,
+        _orbIcon = orbIcon,
+        _orbInfo = orbInfo,
+        _orbExt = orbExt,
+        _orbBlend = orbBlend,
+        _orbBaseX = orbBaseX,
+        _orbBaseY = orbBaseY,
+        _orbSide = (orbBaseX + ORB / 2 < vw / 2) and "left" or "right",
+        _orbGen = 0,
+        _typeGen = 0,
+        _orbChars = {},
+        _orbExtTween = nil,
+        _orbBlendTween = nil,
+        _capsuleQueue = {},
+        _capsuleActive = false,
+        _capsuleCurrent = nil,
+        _orbEnding = false,
+        _toasts = {},
+        _notifyQueue = {},
+        _panelState = "open",
+        _panelAnimating = false,
+        _panelAnimGen = 0,
         _collapsed = false,
     }
     setmetatable(win, Library)
+    Library._activeWindow = win
+    orbExt.Changed:Connect(function() applyOrbLayout(win) end)
+    orbBlend.Changed:Connect(function() applyOrbLayout(win) end)
 
     closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
     minBtn.MouseButton1Click:Connect(function() collapse(win) end)
-    orbHit.MouseButton1Click:Connect(function() expand(win) end)
+
+    local orbDragging, orbMoved, orbStartX, orbStartY, orbOriginX, orbOriginY
+    local orbMoveConn, orbEndConn
+    local function stopOrbDrag()
+        if not orbDragging then return end
+        orbDragging = false
+        if orbMoveConn then pcall(function() orbMoveConn:Disconnect() end) orbMoveConn = nil end
+        if orbEndConn then pcall(function() orbEndConn:Disconnect() end) orbEndConn = nil end
+    end
+    orbHit.MouseButton1Down:Connect(function()
+        if orbDragging then stopOrbDrag() end
+        orbDragging = true
+        orbMoved = false
+        local m = UserInputService:GetMouseLocation()
+        orbStartX, orbStartY = m.X, m.Y
+        orbOriginX, orbOriginY = win._orbBaseX, win._orbBaseY
+        orbMoveConn = UserInputService.InputChanged:Connect(function(i)
+            if not orbDragging then return end
+            local t = i.UserInputType
+            if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
+                local m2 = UserInputService:GetMouseLocation()
+                local dx, dy = m2.X - orbStartX, m2.Y - orbStartY
+                if math.abs(dx) + math.abs(dy) > 3 then orbMoved = true end
+                local w, h = viewport()
+                win._orbBaseX = math.clamp(orbOriginX + dx, 0, math.max(0, w - ORB))
+                win._orbBaseY = math.clamp(orbOriginY + dy, 0, math.max(0, h - ORB))
+                applyOrbLayout(win)
+                local side = computeSide(win)
+                if side ~= win._orbSide then setOrbSide(win, side) end
+            end
+        end)
+        orbEndConn = UserInputService.InputEnded:Connect(function(i)
+            local t = i.UserInputType
+            if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
+                local wasMoved = orbMoved
+                stopOrbDrag()
+                if not wasMoved then expand(win) end
+            end
+        end)
+    end)
 
     UserInputService.InputBegan:Connect(function(input)
         if not (gui and gui.Parent) then return end
@@ -1481,7 +1985,10 @@ function Library.CreateWindow(opts)
     end)
 
     task.delay(0, function()
-        if gui and gui.Parent then pcall(function() win:_fadeIn() end) end
+        if gui and gui.Parent then
+            pcall(function() syncOrbBase(win) end)
+            pcall(function() win:_fadeIn() end)
+        end
     end)
 
     return win
