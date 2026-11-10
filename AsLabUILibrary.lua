@@ -62,6 +62,7 @@ local Cfg = {
 local SIDEBAR_W    = s(Cfg.TabWidth)
 local TAB_AREA_GAP = s(Cfg.TabAreaGap)
 local HEADER_H     = s(64)
+local HEADER_PAD   = s(24)
 local PAD          = s(10)
 local GAP          = s(10)
 local MIN_BLOCK    = s(92)
@@ -452,8 +453,22 @@ createShortcut = function(win, ctrl)
     syncShortcut(ctrl)
     fadeGroup(sc, 0)
 
-    local dragging, moved, startX, startY, originX, originY, conn
+    local dragging, moved, startX, startY, originX, originY, moveConn, endConn
+    local function stopDrag(fire)
+        if not dragging then return end
+        dragging = false
+        if moveConn then pcall(function() moveConn:Disconnect() end) moveConn = nil end
+        if endConn then pcall(function() endConn:Disconnect() end) endConn = nil end
+        if sc and sc.Parent and ctrl._kind == "Button" then
+            pcall(function()
+                TweenService:Create(uscale, TweenInfo.new(0.18), { Scale = 1 }):Play()
+                TweenService:Create(press, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
+            end)
+        end
+        if fire and not moved then fireClick(ctrl) end
+    end
     hit.MouseButton1Down:Connect(function()
+        if dragging then stopDrag(false) end
         dragging = true
         moved = false
         local m = UserInputService:GetMouseLocation()
@@ -463,29 +478,31 @@ createShortcut = function(win, ctrl)
             TweenService:Create(uscale, TweenInfo.new(0.1), { Scale = 0.92 }):Play()
             TweenService:Create(press, TweenInfo.new(0.1), { BackgroundTransparency = 0.25 }):Play()
         end
-        conn = UserInputService.InputChanged:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
-                local dx, dy = i.Position.X - startX, i.Position.Y - startY
+        moveConn = UserInputService.InputChanged:Connect(function(i)
+            if not dragging then return end
+            local t = i.UserInputType
+            if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
+                local m2 = UserInputService:GetMouseLocation()
+                local dx, dy = m2.X - startX, m2.Y - startY
                 if math.abs(dx) + math.abs(dy) > 3 then moved = true end
                 sc.Position = UDim2.fromOffset(originX + dx, originY + dy)
             end
         end)
+        endConn = UserInputService.InputEnded:Connect(function(i)
+            local t = i.UserInputType
+            if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
+                stopDrag(true)
+            end
+        end)
     end)
-    hit.MouseButton1Up:Connect(function()
-        if not dragging then return end
-        dragging = false
-        if conn then conn:Disconnect() conn = nil end
-        if ctrl._kind == "Button" then
-            TweenService:Create(uscale, TweenInfo.new(0.18), { Scale = 1 }):Play()
-            TweenService:Create(press, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
-        end
-        if not moved then fireClick(ctrl) end
-    end)
+    hit.MouseButton1Up:Connect(function() stopDrag(true) end)
+    ctrl._shortcut.disconnect = function() stopDrag(false) end
 end
 
 destroyShortcut = function(win, ctrl)
     local sc = ctrl._shortcut
     if not sc then return end
+    if type(sc.disconnect) == "function" then pcall(sc.disconnect) end
     for i, item in ipairs(win._shortcuts) do
         if item == sc then table.remove(win._shortcuts, i) break end
     end
@@ -1199,11 +1216,11 @@ function Library.CreateWindow(opts)
     local titleIcon = Instance.new("ImageLabel", header)
     titleIcon.Name = "TitleIcon"
     titleIcon.Size = UDim2.fromOffset(iconSize, iconSize)
-    titleIcon.Position = UDim2.new(0, PAD, 0.5, -iconSize / 2)
+    titleIcon.Position = UDim2.new(0, HEADER_PAD, 0.5, -iconSize / 2)
     titleIcon.BackgroundTransparency = 1
     applyIcon(titleIcon, TitleIcon)
 
-    local textLeft = PAD + iconSize + s(10)
+    local textLeft = HEADER_PAD + iconSize + s(10)
     local titleLabel = Instance.new("TextLabel", header)
     titleLabel.Name = "TitleLabel"
     titleLabel.Size = UDim2.new(1, -textLeft - s(44), 0, s(26))
