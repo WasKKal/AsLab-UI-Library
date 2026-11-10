@@ -15,6 +15,100 @@ local TweenService = game:GetService("TweenService")
 local Library = {}
 Library.__index = Library
 
+-- ===================== 网络请求（多执行环境兼容） =====================
+local function httpGet(url)
+    local ok, res = pcall(function()
+        if type(_G.httpGet) == "function" then
+            return _G.httpGet(url)
+        end
+        if type(request) == "function" then
+            local r = request({ Url = url, Method = "GET" })
+            return r and (r.Body or r.body)
+        end
+        if type(syn) == "table" and type(syn.request) == "function" then
+            local r = syn.request({ Url = url, Method = "GET" })
+            return r and (r.Body or r.body)
+        end
+        if game and type(game.HttpGet) == "function" then
+            return game:HttpGet(url)
+        end
+        return nil
+    end)
+    return ok and res or nil
+end
+
+-- ===================== Lucide 图标集成 =====================
+-- 复用 WasKKal/DeltaExecutor-UI-Rebuild@lucide-v6 的 lucide 模块：
+--   module.GetAsset(name) -> { Url, ImageRectOffset?, ImageRectSize? }
+-- 图标为单色 SVG，通过 ImageLabel.ImageColor3 统一着色（Apple 白）。
+local LucideModule = nil
+local LucideCache = {}
+local LUCIDE_URLS = {
+    "https://gcore.jsdelivr.net/gh/WasKKal/DeltaExecutor-UI-Rebuild@lucide-v6/lucide/init.lua",
+    "https://cdn.jsdelivr.net/gh/WasKKal/DeltaExecutor-UI-Rebuild@lucide-v6/lucide/init.lua",
+    "https://raw.githubusercontent.com/WasKKal/DeltaExecutor-UI-Rebuild@lucide-v6/lucide/init.lua",
+}
+
+local function loadLucide()
+    if LucideModule then return LucideModule end
+    local content
+    for _, url in ipairs(LUCIDE_URLS) do
+        local ok, res = pcall(httpGet, url)
+        if ok and type(res) == "string" and #res > 5000 then
+            content = res
+            break
+        end
+        task.wait(0.3)
+    end
+    if not content then return nil end
+    local func, err = loadstring(content)
+    if not func then return nil end
+    local ok, module = pcall(func)
+    if not ok or type(module) ~= "table" or type(module.GetAsset) ~= "function" then
+        return nil
+    end
+    LucideModule = module
+    return LucideModule
+end
+
+-- Icon 参数支持：直接资源（http(s):// / rbxasset:// / 其他 scheme）或 Lucide 图标名
+local function resolveIcon(icon)
+    if type(icon) ~= "string" or #icon == 0 then return nil end
+    if icon:match("^%a[%w+.-]*://") then
+        return { Url = icon }
+    end
+    if LucideCache[icon] ~= nil then
+        return LucideCache[icon]
+    end
+    local asset = nil
+    local mod = loadLucide()
+    if mod then
+        local ok, a = pcall(mod.GetAsset, icon)
+        if ok and a and a.Url then asset = a end
+    end
+    LucideCache[icon] = asset or false
+    return asset
+end
+
+-- 把图标解析结果应用到 ImageLabel，并统一着色 / 缩放
+local function applyIcon(imageLabel, icon)
+    local asset = resolveIcon(icon)
+    if not asset then return false end
+    imageLabel.Image = asset.Url
+    if asset.ImageRectOffset then
+        imageLabel.ImageRectOffset = asset.ImageRectOffset
+        imageLabel.ImageRectSize = asset.ImageRectSize
+    end
+    imageLabel.ImageColor3 = Style.Text
+    imageLabel.ScaleType = Enum.ScaleType.Fit
+    return true
+end
+
+-- 提前拉取 Lucide 模块（可选，避免首次用图标时阻塞）
+function Library.PreloadLucide()
+    return loadLucide() ~= nil
+end
+
 -- ===================== 主题（Apple 风液态玻璃） =====================
 local Style = {
     Glass = Color3.fromRGB(28, 28, 32),       -- 玻璃底色
@@ -171,8 +265,8 @@ function Library.CreateWindow(opts)
         local ic = Instance.new("ImageLabel", info)
         ic.Size = UDim2.new(0, 22, 0, 22)
         ic.Position = UDim2.new(0, PAD + 4, 0.5, -11)
-        ic.Image = InfoIcon
         ic.BackgroundTransparency = 1
+        applyIcon(ic, InfoIcon)
         infoIconOffset = 34
     end
     local infoText = Instance.new("TextLabel", info)
@@ -298,9 +392,9 @@ function Library:AddTab(name, icon)
         local ic = Instance.new("ImageLabel", btn)
         ic.Size = UDim2.new(0, 26, 0, 26)
         ic.Position = UDim2.new(0.5, -13, 0, 8)
-        ic.Image = icon
         ic.BackgroundTransparency = 1
         ic.Active = false
+        applyIcon(ic, icon)
         local tx = Instance.new("TextLabel", btn)
         tx.Size = UDim2.new(1, 0, 0, 18)
         tx.Position = UDim2.new(0, 0, 0, 40)
@@ -400,9 +494,9 @@ local function addControl(tab, kind, opts)
         ic.Name = "Icon"
         ic.Size = UDim2.new(0.46, 0, 0.46, 0)
         ic.Position = UDim2.new(0.27, 0, 0.16, 0)
-        ic.Image = opts.Icon
         ic.BackgroundTransparency = 1
         ic.Active = false
+        applyIcon(ic, opts.Icon)
         local tx = Instance.new("TextLabel", block)
         tx.Name = "Title"
         tx.Size = UDim2.new(1, -8, 0, 20)
