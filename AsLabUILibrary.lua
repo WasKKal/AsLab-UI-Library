@@ -79,6 +79,9 @@ local NOTIFY_MAXCHARS = 25
 local NOTIFY_MARGIN = s(16)
 local NOTIFY_GAP = s(8)
 local NOTIFY_TIME = 3
+local CONFLICT_COLOR = Color3.fromRGB(255, 120, 60)
+local KEY_PLACEHOLDER = "···"
+local KEY_LISTENING = "Tap A Key"
 
 local function httpGet(url)
     local ok, res = pcall(function()
@@ -254,7 +257,23 @@ local function makeBox(parent, w, text)
     hit.Text = ""
     hit.AutoButtonColor = false
     hit.ZIndex = 3
-    return box, label, hit
+    local conflict = Instance.new("TextLabel", box)
+    conflict.Name = "Conflict"
+    conflict.AnchorPoint = Vector2.new(1, 0.5)
+    conflict.Position = UDim2.new(0, -s(8), 0.5, 0)
+    conflict.Size = UDim2.fromOffset(s(170), s(24))
+    conflict.Text = ""
+    conflict.Font = Style.Font
+    conflict.TextSize = s(10)
+    conflict.TextColor3 = CONFLICT_COLOR
+    conflict.TextXAlignment = Enum.TextXAlignment.Right
+    conflict.TextYAlignment = Enum.TextYAlignment.Center
+    conflict.TextTruncate = Enum.TextTruncate.AtEnd
+    conflict.BackgroundTransparency = 1
+    conflict.Active = false
+    conflict.ZIndex = 4
+    conflict:SetAttribute("_skipFade", true)
+    return box, label, hit, conflict
 end
 
 local function makeRow(parent, index, title)
@@ -356,6 +375,39 @@ local function fireClick(ctrl)
         if opts.Callback then pcall(opts.Callback) end
     end
     syncShortcut(ctrl)
+end
+
+local function refreshConflicts(win)
+    local groups = {}
+    for _, t in ipairs(win._tabs or {}) do
+        for _, c in ipairs(t._controls or {}) do
+            local kb = c._keybind
+            local state = c._keyLabel and c._keyLabel.Text or ""
+            if kb ~= nil and state ~= KEY_PLACEHOLDER and state ~= KEY_LISTENING then
+                local key = tostring(kb)
+                groups[key] = groups[key] or {}
+                table.insert(groups[key], c)
+            end
+        end
+    end
+    for _, t in ipairs(win._tabs or {}) do
+        for _, c in ipairs(t._controls or {}) do
+            local cl = c._conflictLabel
+            if cl and cl.Parent then
+                local names = {}
+                if c._keybind ~= nil then
+                    for _, o in ipairs(groups[tostring(c._keybind)] or {}) do
+                        if o ~= c then names[#names + 1] = tostring(o._opts.Title or "") end
+                    end
+                end
+                if #names > 0 then
+                    cl.Text = "Conflict with " .. table.concat(names, ", ", 1, math.min(#names, 2))
+                else
+                    cl.Text = ""
+                end
+            end
+        end
+    end
 end
 
 slotY = function(win, h)
@@ -522,12 +574,13 @@ end
 startListen = function(win, ctrl, label)
     if win._listening then
         local old = win._listening
-        old.label.Text = "···"
+        old.label.Text = KEY_PLACEHOLDER
         old.ctrl._keybind = nil
     end
     ctrl._keybind = nil
-    label.Text = "Tap A Key"
+    label.Text = KEY_LISTENING
     win._listening = { ctrl = ctrl, label = label }
+    refreshConflicts(win)
 end
 
 buildDetail = function(win, ctrl)
@@ -569,7 +622,9 @@ buildDetail = function(win, ctrl)
     back.MouseButton1Click:Connect(function() closeDetail(win) end)
 
     local krow = makeRow(layer, 0, "Board-Key")
-    local _, klabel, khit = makeBox(krow, s(110), "···")
+    local _, klabel, khit, kconflict = makeBox(krow, s(110), KEY_PLACEHOLDER)
+    ctrl._keyLabel = klabel
+    ctrl._conflictLabel = kconflict
     khit.MouseButton1Click:Connect(function() startListen(win, ctrl, klabel) end)
 
     local arow = makeRow(layer, 1, "AddShortcut")
@@ -945,10 +1000,11 @@ openDetail = function(win, ctrl)
     if win._detail then return end
     for _, p in ipairs(win._colorPanels or {}) do p.Visible = false end
     if win._listening then
-        win._listening.label.Text = "···"
+        win._listening.label.Text = KEY_PLACEHOLDER
         win._listening.ctrl._keybind = nil
         win._listening = nil
     end
+    refreshConflicts(win)
     if not ctrl._detailLayer then buildDetail(win, ctrl) end
     local cont = nil
     for _, t in ipairs(win._tabs) do
@@ -972,10 +1028,11 @@ closeDetail = function(win)
     if not ctrl then return end
     win._detail = nil
     if win._listening then
-        win._listening.label.Text = "···"
+        win._listening.label.Text = KEY_PLACEHOLDER
         win._listening.ctrl._keybind = nil
         win._listening = nil
     end
+    refreshConflicts(win)
     local layer = ctrl._detailLayer
     if layer then
         fadeGroup(layer, 1, function()
@@ -1276,7 +1333,11 @@ applyOrbLayout = function(win)
     orb.Size = UDim2.fromOffset(ORB + ext, ORB)
     orb.Position = UDim2.fromOffset(px, baseY)
     local iconOff = ORB * 0.22
-    win._orbIcon.Position = UDim2.fromOffset(baseX + iconOff - px, iconOff)
+    if ext < 0.5 then
+        win._orbIcon.Position = UDim2.fromOffset(iconOff, iconOff)
+    else
+        win._orbIcon.Position = UDim2.fromOffset(baseX + iconOff - px, iconOff)
+    end
     win._orbInfo.Size = UDim2.fromOffset(ext, ORB)
     win._orbInfo.Position = UDim2.fromOffset(ORB * (1 - blend), 0)
 end
@@ -1577,7 +1638,7 @@ function Library:ShowNotify(opts)
 end
 
 local function cancelAnim(win)
-    for _, key in ipairs({ "_mainTween", "_backdropTween", "_orbTween" }) do
+    for _, key in ipairs({ "_mainTween", "_mainFadeTween", "_cornerTween", "_backdropTween", "_orbTween" }) do
         local tw = win[key]
         if tw then pcall(function() tw:Cancel() end) win[key] = nil end
     end
@@ -1589,25 +1650,43 @@ local function collapse(win)
     win._panelAnimGen = (win._panelAnimGen or 0) + 1
     local gen = win._panelAnimGen
     win._panelAnimating = true
+    win:_finishFadeIn()
+    syncOrbBase(win)
     cancelAnim(win)
     for _, item in ipairs(win._shortcuts) do
         if item.frame and item.frame.Parent then item.frame.Visible = false end
     end
-    local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
-    win._mainTween = TweenService:Create(win._main, ti, {
-        Size = UDim2.fromOffset(ORB, ORB),
-        GroupTransparency = 1,
+    local sizeTi = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+    win._mainTween = TweenService:Create(win._mainScale, sizeTi, {
+        Scale = ORB / math.max(1, win._sizeX),
     })
     win._mainTween:Play()
-    win._backdropTween = TweenService:Create(win._backdrop, ti, { BackgroundTransparency = 1 })
+    win._mainFadeTween = TweenService:Create(win._main,
+        TweenInfo.new(COLLAPSE_T * 0.82, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+        { GroupTransparency = 1 })
+    win._mainFadeTween:Play()
+    if win._mainCorner then
+        win._cornerTween = TweenService:Create(win._mainCorner, sizeTi,
+            { CornerRadius = UDim.new(0, ORB / 2) })
+        win._cornerTween:Play()
+    end
+    win._backdropTween = TweenService:Create(win._backdrop,
+        TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+        { BackgroundTransparency = 1 })
     win._backdropTween:Play()
+    win._orb.Visible = true
+    win._orb.GroupTransparency = 1
+    win._orbTween = TweenService:Create(win._orb,
+        TweenInfo.new(COLLAPSE_T * 0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        { GroupTransparency = 0 })
+    win._orbTween:Play()
     task.delay(COLLAPSE_T + 0.02, function()
         if win._panelAnimGen ~= gen then return end
         if win._collapsed and win._gui.Parent then
             win._main.Visible = false
             win._orb.Visible = true
-            win._orbTween = fadeGroup(win._orb, 0)
-            syncOrbBase(win)
+            win._orb.GroupTransparency = 0
+            applyOrbLayout(win)
         end
         win._panelAnimating = false
         win._panelState = "closed"
@@ -1621,18 +1700,24 @@ local function expand(win)
     win._panelAnimGen = (win._panelAnimGen or 0) + 1
     local gen = win._panelAnimGen
     win._panelAnimating = true
+    win:_finishFadeIn()
     clearCapsule(win, true)
     cancelAnim(win)
     win._main.Visible = true
-    win._orbTween = fadeGroup(win._orb, 1, function()
-        if not win._collapsed and win._orb.Parent then win._orb.Visible = false end
-    end)
+    win._main.GroupTransparency = 1
+    win._orb.Visible = false
     local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
-    win._mainTween = TweenService:Create(win._main, ti, {
-        Size = UDim2.fromOffset(win._sizeX, win._sizeY),
-        GroupTransparency = 0,
-    })
+    win._mainTween = TweenService:Create(win._mainScale, ti, { Scale = 1 })
     win._mainTween:Play()
+    win._mainFadeTween = TweenService:Create(win._main,
+        TweenInfo.new(COLLAPSE_T * 0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        { GroupTransparency = 0 })
+    win._mainFadeTween:Play()
+    if win._mainCorner then
+        win._cornerTween = TweenService:Create(win._mainCorner, ti,
+            { CornerRadius = UDim.new(0, s(24)) })
+        win._cornerTween:Play()
+    end
     win._backdropTween = TweenService:Create(win._backdrop, ti, { BackgroundTransparency = 0.45 })
     win._backdropTween:Play()
     task.delay(COLLAPSE_T * 0.7, function()
@@ -1686,6 +1771,9 @@ function Library.CreateWindow(opts)
     main.AnchorPoint = Vector2.new(0, 0)
     main.GroupTransparency = 0
     main.ZIndex = 1
+    main.ClipsDescendants = false
+    local mainScale = Instance.new("UIScale", main)
+    mainScale.Scale = 1
 
     local header = Instance.new("Frame", main)
     header.Name = "Header"
@@ -1745,6 +1833,7 @@ function Library.CreateWindow(opts)
     controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, bodyY)
     controlRegion.BackgroundTransparency = 1
     controlRegion.BorderSizePixel = 0
+    controlRegion.ClipsDescendants = false
 
     local footer = Instance.new("Frame", main)
     footer.Name = "Footer"
@@ -1871,6 +1960,8 @@ function Library.CreateWindow(opts)
     local win = {
         _gui = gui,
         _main = main,
+        _mainScale = mainScale,
+        _mainCorner = main:FindFirstChildOfClass("UICorner"),
         _sidebar = sidebar,
         _controlRegion = controlRegion,
         _tabs = {},
@@ -1967,11 +2058,13 @@ function Library.CreateWindow(opts)
                     listen.ctrl._keybind = kc
                     listen.label.Text = tostring(kc.Name)
                     win._listening = nil
+                    refreshConflicts(win)
                 end
             elseif t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
-                listen.label.Text = "···"
+                listen.label.Text = KEY_PLACEHOLDER
                 listen.ctrl._keybind = nil
                 win._listening = nil
+                refreshConflicts(win)
             end
             return
         end
@@ -1992,6 +2085,20 @@ function Library.CreateWindow(opts)
     end)
 
     return win
+end
+
+local function restoreFade(st)
+    for _, el in ipairs(st.targets) do
+        pcall(function()
+            if el:IsA("UIStroke") then
+                el.Transparency = el:GetAttribute("_st") or 0
+            elseif el:IsA("TextLabel") or el:IsA("TextButton") then
+                el.TextTransparency = el:GetAttribute("_tt") or 0
+            else
+                el.BackgroundTransparency = el:GetAttribute("_bt") or 0
+            end
+        end)
+    end
 end
 
 function Library:_fadeIn()
@@ -2021,8 +2128,11 @@ function Library:_fadeIn()
     local tween = TweenService:Create(v,
         TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
         { Value = 0 })
+    local st = { v = v, tween = tween, targets = targets }
+    self._fadeState = st
     tween:Play()
     v.Changed:Connect(function(k)
+        if self._fadeState ~= st then return end
         for _, el in ipairs(targets) do
             if el:IsA("UIStroke") then
                 local t = el:GetAttribute("_st") or 0
@@ -2037,17 +2147,20 @@ function Library:_fadeIn()
         end
     end)
     tween.Completed:Connect(function()
-        for _, el in ipairs(targets) do
-            if el:IsA("UIStroke") then
-                el.Transparency = el:GetAttribute("_st")
-            elseif el:IsA("TextLabel") or el:IsA("TextButton") then
-                el.TextTransparency = el:GetAttribute("_tt")
-            else
-                el.BackgroundTransparency = el:GetAttribute("_bt")
-            end
-        end
-        v:Destroy()
+        if self._fadeState ~= st then return end
+        self._fadeState = nil
+        restoreFade(st)
+        pcall(function() v:Destroy() end)
     end)
+end
+
+function Library:_finishFadeIn()
+    local st = self._fadeState
+    if not st then return end
+    self._fadeState = nil
+    if st.tween then pcall(function() st.tween:Cancel() end) end
+    restoreFade(st)
+    if st.v then pcall(function() st.v:Destroy() end) end
 end
 
 function Library:AddTab(name, icon)
@@ -2127,6 +2240,7 @@ function Library:AddTab(name, icon)
     container.BackgroundTransparency = 1
     container.GroupTransparency = 0
     container.Visible = false
+    container.ClipsDescendants = false
 
     local tab = {
         _win = self, _name = name,
