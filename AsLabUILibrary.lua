@@ -12,12 +12,12 @@ local function s(n) return n * SCALE end
 local Style = {
     Glass = Color3.fromRGB(28, 28, 34),
     GlassTop = Color3.fromRGB(46, 46, 54),
-    GlassTransparency = 0.62,
+    GlassTransparency = 0.48,
     Stroke = Color3.fromRGB(255, 255, 255),
     StrokeTransparency = 0.72,
     Radius = UDim.new(0, s(18)),
     Text = Color3.new(1, 1, 1),
-    SubText = Color3.fromRGB(180, 184, 194),
+    SubText = Color3.fromRGB(232, 236, 244),
     Font = Enum.Font.Gotham,
     SilverTop = Color3.fromRGB(252, 253, 255),
     SilverBottom = Color3.fromRGB(196, 201, 212),
@@ -1710,10 +1710,6 @@ local function collapse(win)
         Scale = ORB / math.max(1, win._sizeX),
     })
     win._mainTween:Play()
-    win._mainFadeTween = TweenService:Create(win._main,
-        TweenInfo.new(COLLAPSE_T * 0.82, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-        { GroupTransparency = 1 })
-    win._mainFadeTween:Play()
     if win._mainCorner then
         win._cornerTween = TweenService:Create(win._mainCorner, sizeTi,
             { CornerRadius = UDim.new(0, ORB / 2) })
@@ -1726,6 +1722,9 @@ local function collapse(win)
         { GroupTransparency = 0 })
     win._orbTween:Play()
     task.delay(COLLAPSE_T + 0.02, function()
+        if not win._collapsed and win._main and win._main.Parent then
+            win._main.GroupTransparency = 0
+        end
         if win._panelAnimGen ~= gen then return end
         if win._collapsed and win._gui.Parent then
             win._main.Visible = false
@@ -1749,15 +1748,11 @@ local function expand(win)
     clearCapsule(win, true)
     cancelAnim(win)
     win._main.Visible = true
-    win._main.GroupTransparency = 1
+    win._main.GroupTransparency = 0
     win._orb.Visible = false
     local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
     win._mainTween = TweenService:Create(win._mainScale, ti, { Scale = 1 })
     win._mainTween:Play()
-    win._mainFadeTween = TweenService:Create(win._main,
-        TweenInfo.new(COLLAPSE_T * 0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { GroupTransparency = 0 })
-    win._mainFadeTween:Play()
     if win._mainCorner then
         win._cornerTween = TweenService:Create(win._mainCorner, ti,
             { CornerRadius = UDim.new(0, s(24)) })
@@ -1771,8 +1766,10 @@ local function expand(win)
         end
     end)
     task.delay(COLLAPSE_T + 0.02, function()
+        if win._main and win._main.Parent and not win._collapsed then
+            win._main.GroupTransparency = 0
+        end
         if win._panelAnimGen ~= gen then return end
-        if win._main and win._main.Parent then win._main.GroupTransparency = 0 end
         win._panelAnimating = false
         win._panelState = "open"
         flushNotifyQueue(win)
@@ -2147,17 +2144,21 @@ function Library:_fadeIn()
     end
     self._fadeGen = (self._fadeGen or 0) + 1
     local gen = self._fadeGen
-    self._main.GroupTransparency = 1
-    local tw = TweenService:Create(self._main,
+    if self._main and self._main.Parent then
+        self._main.GroupTransparency = 0
+    end
+    local scale = self._mainScale
+    if not (scale and scale.Parent) then return end
+    scale.Scale = 0.96
+    local tw = TweenService:Create(scale,
         TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { GroupTransparency = 0 })
+        { Scale = 1 })
     self._fadeTween = tw
     tw:Play()
     task.delay(0.55, function()
         if self._fadeGen ~= gen then return end
-        if self._main and self._main.Parent then
-            self._main.GroupTransparency = 0
-        end
+        if scale and scale.Parent then scale.Scale = 1 end
+        if self._main and self._main.Parent then self._main.GroupTransparency = 0 end
     end)
 end
 
