@@ -1788,6 +1788,7 @@ function Library.CreateWindow(opts)
     local Title = opts.Title or "AsLab UI"
     local InfoText = opts.Info or ""
     local TitleIcon = opts.TitleIcon or "layout-grid"
+    local Background = opts.Background or nil
 
     local holder = getHolder()
     if not holder then return nil end
@@ -1813,6 +1814,43 @@ function Library.CreateWindow(opts)
     main.ClipsDescendants = false
     local mainScale = Instance.new("UIScale", main)
     mainScale.Scale = 1
+
+    local background = nil
+    do
+        local bgUrl, bgVideo
+        if type(Background) == "string" then
+            bgUrl = Background
+        elseif type(Background) == "table" then
+            bgUrl = Background.Url or Background.url
+            bgVideo = not not Background.Video
+        end
+        if type(bgUrl) == "string" and bgUrl ~= "" then
+            if not bgVideo then
+                bgVideo = bgUrl:match("%.mp4$") or bgUrl:match("%.webm$") or bgUrl:match("%.mov$")
+            end
+            if bgVideo then
+                background = Instance.new("VideoFrame", main)
+                background.Video = bgUrl
+                background.Looped = true
+                background.Playing = true
+                background.Volume = 0
+            else
+                background = Instance.new("ImageLabel", main)
+                background.Image = bgUrl
+                background.ScaleType = Enum.ScaleType.Crop
+                background.ImageColor3 = Color3.new(1, 1, 1)
+            end
+            background.Name = "Background"
+            background.Size = UDim2.fromScale(1, 1)
+            background.Position = UDim2.fromOffset(0, 0)
+            background.BackgroundTransparency = 1
+            background.BorderSizePixel = 0
+            background.ZIndex = 0
+            background.ClipsDescendants = true
+            local bcorner = Instance.new("UICorner", background)
+            bcorner.CornerRadius = UDim.new(0, s(24))
+        end
+    end
 
     local header = Instance.new("Frame", main)
     header.Name = "Header"
