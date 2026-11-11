@@ -65,13 +65,15 @@ local Cfg = {
     TabTextSize = 15,
     TabTextGap = 8,
     TabRowPadX = 6,
-    TabActiveColor = Color3.new(0, 0, 0),
-    TabInactiveColor = Color3.new(1, 1, 1),
+    -- 选中态：纯白文字/图标 + 蓝调高亮块 + 亮描边，避免真机 UIGradient 失效时
+    -- 深色背景与黑字黑图标糊在一起（"重叠导致不明显"）
+    TabActiveColor = Color3.fromRGB(255, 255, 255),
+    TabInactiveColor = Color3.fromRGB(150, 156, 172),
     TabColorFadeTime = 0.22,
-    TabSelFill = Color3.fromRGB(34, 34, 42),
-    TabSelFillTransparency = 0.15,
-    TabSelStroke = Color3.fromRGB(120, 126, 140),
-    TabSelStrokeThickness = 1,
+    TabSelFill = Color3.fromRGB(50, 58, 82),
+    TabSelFillTransparency = 0.1,
+    TabSelStroke = Color3.fromRGB(150, 172, 222),
+    TabSelStrokeThickness = 1.4,
     TabSelCorner = UDim.new(0, s(8)),
     TabSelFadeTime = 0.18,
 }
@@ -1646,12 +1648,10 @@ applyOrbLayout = function(win)
     local px = baseX - ext * blend
     orb.Size = UDim2.fromOffset(ORB + ext, ORB)
     orb.Position = UDim2.fromOffset(px, baseY)
-    local iconOff = ORB * 0.22
-    if ext < 0.5 then
-        win._orbIcon.Position = UDim2.fromOffset(iconOff, iconOff)
-    else
-        win._orbIcon.Position = UDim2.fromOffset(baseX + iconOff - px, iconOff)
-    end
+    -- 图标锚点 (0.5,0.5)：圆心 = 圆形端中心。
+    -- orb 宽 = ORB + ext，左边缘 px = baseX - ext*blend；
+    -- 圆形端圆心相对 orb 左边缘 = ORB/2 + ext*blend，纵向恒为 ORB/2。
+    win._orbIcon.Position = UDim2.fromOffset(ORB / 2 + ext * blend, ORB / 2)
     win._orbInfo.Size = UDim2.fromOffset(ext, ORB)
     win._orbInfo.Position = UDim2.fromOffset(ORB * (1 - blend), 0)
 end
@@ -1955,9 +1955,35 @@ function Library:ShowNotify(opts)
 end
 
 local function cancelAnim(win)
-    for _, key in ipairs({ "_mainTween", "_mainFadeTween", "_cornerTween", "_orbTween", "_fadeTween" }) do
+    for _, key in ipairs({ "_mainTween", "_mainFadeTween", "_cornerTween", "_orbTween", "_fadeTween",
+                           "_mainTweenPos", "_posTween" }) do
         local tw = win[key]
         if tw then pcall(function() tw:Cancel() end) win[key] = nil end
+    end
+end
+
+-- 仿 WasUIPro MinimizeToDots：收起时隐藏窗口内部 GuiObject 内容，
+-- 只保留 main 自身的边框（渐变 / UIStroke / UICorner 不是 GuiObject，不受影响）。
+local function setMainContentVisible(win, show)
+    local main = win._main
+    if not main then return end
+    if not show then
+        local saved = {}
+        for _, ch in ipairs(main:GetChildren()) do
+            if ch:IsA("GuiObject") and ch.Visible then
+                saved[ch] = true
+                ch.Visible = false
+            end
+        end
+        win._collapseHidden = saved
+    else
+        local saved = win._collapseHidden
+        if saved then
+            for ch in pairs(saved) do
+                if ch and ch.Parent then ch.Visible = true end
+            end
+            win._collapseHidden = nil
+        end
     end
 end
 
@@ -1968,38 +1994,61 @@ local function collapse(win)
     local gen = win._panelAnimGen
     win._panelAnimating = true
     win:_finishFadeIn()
-    syncOrbBase(win)
     cancelAnim(win)
     -- 快捷按钮常驻：收起窗口不再隐藏快捷按钮
-    local k = ORB / math.max(1, win._sizeX)
-    local sizeTi = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
-    win._mainPosBeforeCollapse = win._main.Position
-    win._mainTween = TweenService:Create(win._mainScale, sizeTi, {
-        Scale = k,
+
+    local main = win._main
+    local ap = main.AbsolutePosition
+    local ax = ap and ap.X or main.Position.X.Offset
+    local ay = ap and ap.Y or main.Position.Y.Offset
+
+    -- 仿 WasUIPro MinimizeToDots：主窗口「边框自身」用 Size/Position 直接收缩，
+    -- 不再用 UIScale 把整个窗口连内容一起缩放（那样内容会挤压变形）。
+    -- WasUIPro 的收拢结束点是窗口左上角顶点（Position 固定）；
+    -- 我们把结束点改成「标题图标」：收拢后的 ORB 正圆正好以主 Icon 为中心，
+    -- 圆心 = 原左上角 + (HEADER_PAD + TITLE_ICON/2, HEADER_H/2)，
+    -- 即圆左上角偏移 (TITLE_ICON_DX, TITLE_ICON_DY)。
+    local endX = ax + TITLE_ICON_DX
+    local endY = ay + TITLE_ICON_DY
+    -- 归一化当前位置为纯 offset（视觉不变），保证两端都是 offset 的 tween 平滑
+    main.Position = UDim2.fromOffset(ax, ay)
+    -- 用创建时的固定窗口尺寸记录展开几何（不受动画中途打断影响）
+    win._mainPosBeforeCollapse = UDim2.fromOffset(ax, ay)
+    win._mainSizeBeforeCollapse = UDim2.fromOffset(win._sizeX, win._sizeY)
+
+    -- 悬浮球基准同步到「图标结束点」，并复位为纯圆（图标已 AnchorPoint 居中）
+    win._orbBaseX, win._orbBaseY = endX, endY
+    local vw = viewport()
+    win._orbSide = (endX + ORB / 2 < vw / 2) and "left" or "right"
+    win._orbExt.Value = 0
+    win._orbBlend.Value = (win._orbSide == "left") and 0 or 1
+    applyOrbLayout(win)
+
+    -- 收拢全程不再用 UIScale，锁定为 1，保证 Size tween 精确（不被二次缩放）
+    if win._mainScale then win._mainScale.Scale = 1 end
+    local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+    win._mainTween = TweenService:Create(main, ti, {
+        Size = UDim2.fromOffset(ORB, ORB),
+        Position = UDim2.fromOffset(endX, endY),
     })
     win._mainTween:Play()
     if win._mainCorner then
-        win._cornerTween = TweenService:Create(win._mainCorner, sizeTi,
+        win._cornerTween = TweenService:Create(win._mainCorner, ti,
             { CornerRadius = UDim.new(0, ORB / 2) })
         win._cornerTween:Play()
     end
-    -- 主面板向标题图标聚拢：收起时边框以图标为终点并围成圆形，而非直接消失
-    local ap = win._main.AbsolutePosition
-    if ap then
-        local tx = ap.X + (HEADER_PAD + TITLE_ICON / 2) * (1 - k)
-        local ty = ap.Y + (HEADER_H / 2) * (1 - k)
-        win._mainTweenPos = TweenService:Create(win._main, sizeTi,
-            { Position = UDim2.fromOffset(tx, ty) })
-        win._mainTweenPos:Play()
-    end
+    -- 隐藏内部内容，只留边框在收缩（WasUIPro 同款做法）
+    setMainContentVisible(win, false)
+
+    -- 收拢后期：与收成圆的边框同心同尺寸的悬浮球淡入，圆中心带 Icon，
+    -- 边框收拢到位后无缝合一（不是"消失后另建一个球"）。
     win._orb.Visible = true
     setGroupTransparency(win._orb, 1)
     win._orbTween = tweenGroup(win._orb, 0,
-        TweenInfo.new(COLLAPSE_T * 0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out))
+        TweenInfo.new(COLLAPSE_T * 0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out,
+            0, false, COLLAPSE_T * 0.55))
+
     task.delay(COLLAPSE_T + 0.02, function()
-        if not win._collapsed and win._main and win._main.Parent then
-            -- main 为 Frame，无 GroupTransparency（始终可见）
-        end
         if win._panelAnimGen ~= gen then return end
         if win._collapsed and win._gui.Parent then
             win._main.Visible = false
@@ -2023,30 +2072,23 @@ local function expand(win)
     clearCapsule(win, true)
     cancelAnim(win)
     win._main.Visible = true
-    -- main 为 Frame，无 GroupTransparency（始终可见）
     win._orb.Visible = false
-    local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
-    win._mainTween = TweenService:Create(win._mainScale, ti, { Scale = 1 })
+    -- 对称还原：边框自身从 ORB 正圆展开回原窗口 Size/Position/Corner，
+    -- 同时恢复被隐藏的内部内容（仿 WasUIPro RestoreFromDots）。
+    if win._mainScale then win._mainScale.Scale = 1 end
+    setMainContentVisible(win, true)
+    local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+    win._mainTween = TweenService:Create(win._main, ti, {
+        Size = win._mainSizeBeforeCollapse or win._main.Size,
+        Position = win._mainPosBeforeCollapse or win._main.Position,
+    })
     win._mainTween:Play()
     if win._mainCorner then
         win._cornerTween = TweenService:Create(win._mainCorner, ti,
             { CornerRadius = UDim.new(0, s(24)) })
         win._cornerTween:Play()
     end
-    if win._mainPosBeforeCollapse then
-        win._posTween = TweenService:Create(win._main, ti,
-            { Position = win._mainPosBeforeCollapse })
-        win._posTween:Play()
-    end
-    task.delay(COLLAPSE_T * 0.7, function()
-        if not win._collapsed and win._gui.Parent then
-            -- 快捷按钮常驻：展开窗口不再重新显示快捷按钮（始终可见）
-        end
-    end)
     task.delay(COLLAPSE_T + 0.02, function()
-        if win._main and win._main.Parent and not win._collapsed then
-            -- main 为 Frame，无 GroupTransparency（始终可见）
-        end
         if win._panelAnimGen ~= gen then return end
         win._panelAnimating = false
         win._panelState = "open"
@@ -2126,7 +2168,10 @@ function Library.CreateWindow(opts)
         background.Position = UDim2.fromOffset(0, 0)
         background.BackgroundTransparency = 1
         background.BorderSizePixel = 0
-        background.ZIndex = 10000
+        -- 背景必须垫在窗口所有内容之下：ZIndexBehavior=Sibling 下同一父级按
+        -- ZIndex 排序，内部内容多为默认 z=1，若背景沿用 10000 会整片盖住
+        -- 标题 / 选项卡 / 控件（只剩 footer 可见）。设为 0 恒定最底层。
+        background.ZIndex = 0
         background.ClipsDescendants = true
         local bcorner = Instance.new("UICorner", background)
         bcorner.CornerRadius = UDim.new(0, s(24))
@@ -2294,10 +2339,13 @@ function Library.CreateWindow(opts)
         NumberSequenceKeypoint.new(0.5, 0.97),
         NumberSequenceKeypoint.new(1, 1),
     })
+    -- 图标用 AnchorPoint(0.5,0.5) 锚定，Position 恒为「圆形端圆心」，
+    -- 从结构上保证图标绝对居中，不依赖硬编码的 fromOffset 偏移。
     local orbIcon = Instance.new("ImageLabel", orb)
     orbIcon.Name = "OrbIcon"
     orbIcon.Size = UDim2.fromOffset(ORB * 0.56, ORB * 0.56)
-    orbIcon.Position = UDim2.fromOffset(ORB * 0.22, ORB * 0.22)
+    orbIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+    orbIcon.Position = UDim2.fromOffset(ORB / 2, ORB / 2)
     orbIcon.BackgroundTransparency = 1
     orbIcon.Active = false
     orbIcon.ZIndex = 10051
@@ -2479,6 +2527,14 @@ function Library.CreateWindow(opts)
         end)
     end)
 
+    -- 点击展开兜底：部分执行器 / 触屏下 MouseButton1Down 与 InputEnded 的
+    -- 派发顺序或配对不保证（Down 可能不触发，或 InputEnded 先于 Down 到达），
+    -- 仅靠上面的动态 InputEnded 连接会漏掉展开。这里用标准 Click 事件补一条，
+    -- 拖动过则不展开；expand 自身有 not _collapsed 守卫，重复触发安全。
+    orbHit.MouseButton1Click:Connect(function()
+        if not orbMoved then expand(win) end
+    end)
+
     UserInputService.InputBegan:Connect(function(input)
         if not (gui and gui.Parent) then return end
         local listen = win._listening
@@ -2612,11 +2668,13 @@ function Library:AddTab(name, icon)
     selStroke.Transparency = 1
     selStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     selStroke:SetAttribute("_skipFade", true)
+    -- 选中块不再用亮银渐变（真机发灰时会让白字/图标与背景糊在一起），
+    -- 改用与高亮块同色系的低对比渐变，保证文字与图标始终清晰。
     local selGrad = Instance.new("UIGradient", sel)
     selGrad.Rotation = 135
     selGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Style.SilverTop),
-        ColorSequenceKeypoint.new(1, Style.SilverBottom),
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(66, 76, 104)),
+        ColorSequenceKeypoint.new(1, Cfg.TabSelFill),
     })
 
     local hasIcon = (icon ~= nil and icon ~= "")
