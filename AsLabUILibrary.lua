@@ -1832,7 +1832,7 @@ function Library.CreateWindow(opts)
     local titleLabel = Instance.new("TextLabel", header)
     titleLabel.Name = "TitleLabel"
     titleLabel.Size = UDim2.new(1, -textLeft - s(24), 0, s(26))
-    titleLabel.Position = UDim2.new(0, textLeft, 0, s(10))
+    titleLabel.Position = UDim2.new(0, textLeft, 0, s(6))
     titleLabel.Text = Title
     titleLabel.Font = Style.Font
     titleLabel.TextSize = s(18)
@@ -1845,7 +1845,7 @@ function Library.CreateWindow(opts)
     local infoLabel = Instance.new("TextLabel", header)
     infoLabel.Name = "InfoLabel"
     infoLabel.Size = UDim2.new(1, -textLeft - s(24), 0, s(18))
-    infoLabel.Position = UDim2.new(0, textLeft, 0, s(36))
+    infoLabel.Position = UDim2.new(0, textLeft, 0, s(32))
     infoLabel.Text = InfoText
     infoLabel.Font = Style.Font
     infoLabel.TextSize = s(12)
@@ -1872,8 +1872,8 @@ function Library.CreateWindow(opts)
 
     local controlRegion = Instance.new("Frame", main)
     controlRegion.Name = "ControlRegion"
-    controlRegion.Size = UDim2.new(1, -(PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN), 1, -bodyY)
-    controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, bodyY)
+    controlRegion.Size = UDim2.new(1, -(PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN), 1, -(s(8) + FOOTER_H + PAD))
+    controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, s(8))
     controlRegion.BackgroundTransparency = 1
     controlRegion.BorderSizePixel = 0
     controlRegion.ClipsDescendants = false
