@@ -66,6 +66,7 @@ local HEADER_H     = s(58)
 local HEADER_PAD   = s(16)
 local PAD          = s(10)
 local GAP          = s(10)
+local H_GAP        = s(11.2)
 local MIN_BLOCK    = s(92)
 local PAD_IN       = s(12)
 local PAD_TOP      = s(2)
@@ -321,7 +322,7 @@ local function updateCanvas(win)
     local need = win._viewH or 0
     local areaW = (win._controlW or win._sizeX) - PAD_IN * 2
     local n = math.min(3, math.max(1, math.floor((areaW + GAP) / (MIN_BLOCK + GAP))))
-    local side = (areaW - GAP * (n - 1)) / n
+    local side = (areaW - H_GAP * (n - 1)) / n
     for _, t in ipairs(win._tabs) do
         local rows = math.ceil(#t._controls / n)
         local h = PAD_IN * 2 + rows * (side + GAP) + PAD_IN
@@ -371,12 +372,12 @@ local function relayout(tab)
     local win = tab._win
     local areaW = (win._controlW or win._sizeX) - PAD_IN * 2
     local n = math.min(3, math.max(1, math.floor((areaW + GAP) / (MIN_BLOCK + GAP))))
-    local side = (areaW - GAP * (n - 1)) / n
+    local side = (areaW - H_GAP * (n - 1)) / n
     for i, ctrl in ipairs(tab._controls) do
         local col = (i - 1) % n
         local row = math.floor((i - 1) / n)
         ctrl._block.Size = UDim2.new(0, side, 0, side)
-        ctrl._block.Position = UDim2.new(0, col * (side + GAP) + side / 2, 0, row * (side + GAP) + side / 2)
+        ctrl._block.Position = UDim2.new(0, col * (side + H_GAP) + side / 2, 0, row * (side + GAP) + side / 2)
     end
     updateCanvas(win)
 end
@@ -1845,7 +1846,7 @@ function Library.CreateWindow(opts)
     local infoLabel = Instance.new("TextLabel", header)
     infoLabel.Name = "InfoLabel"
     infoLabel.Size = UDim2.new(1, -textLeft - s(24), 0, s(18))
-    infoLabel.Position = UDim2.new(0, textLeft, 0, s(32))
+    infoLabel.Position = UDim2.new(0, textLeft, 0, s(27))
     infoLabel.Text = InfoText
     infoLabel.Font = Style.Font
     infoLabel.TextSize = s(12)
@@ -1865,7 +1866,7 @@ function Library.CreateWindow(opts)
 
     local sep = Instance.new("Frame", main)
     sep.Name = "TabSeparator"
-    sep.Size = UDim2.new(0, 1, 1, -FOOTER_H - PAD + 1)
+    sep.Size = UDim2.new(0, 1, 1, -FOOTER_H - PAD)
     sep.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP / 2, 0, 0)
     sep.BackgroundColor3 = Cfg.DividerColor
     sep.BorderSizePixel = 0
@@ -1901,8 +1902,8 @@ function Library.CreateWindow(opts)
     footer.ZIndex = 6
     local footerSep = Instance.new("Frame", footer)
     footerSep.Name = "FooterSeparator"
-    footerSep.Size = UDim2.new(0, SIDEBAR_W + TAB_AREA_GAP / 2 + 1, 0, 1)
-    footerSep.Position = UDim2.new(0, 0, 0, 0)
+    footerSep.Size = UDim2.new(0, SIDEBAR_W + TAB_AREA_GAP / 2 + 1 + PAD / 2, 0, 1)
+    footerSep.Position = UDim2.new(0, -PAD / 2, 0, 0)
     footerSep.BackgroundColor3 = Cfg.DividerColor
     footerSep.BorderSizePixel = 0
 
@@ -1911,7 +1912,7 @@ function Library.CreateWindow(opts)
         local b = Instance.new("TextButton", footer)
         b.Name = name
         b.Size = UDim2.fromOffset(fbtn, fbtn)
-        b.Position = UDim2.new(0, x, 0.5, -fbtn / 2 + s(8))
+        b.Position = UDim2.new(0, x, 0.5, -fbtn / 2 + s(5))
         b.BackgroundTransparency = 1
         b.Text = ""
         b.AutoButtonColor = false
