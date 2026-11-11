@@ -6,6 +6,7 @@ local Win = Library.CreateWindow({
     TitleIcon = "layout-grid",
     Size = UDim2.fromOffset(540, 400),
     Info = "Info Bar",
+    Background = "https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/assets/aslab_wallpaper.png",
 })
 
 local TabGeneral = Win:AddTab("General", "settings")
