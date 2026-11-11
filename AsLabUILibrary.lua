@@ -1479,6 +1479,8 @@ setOrbSide = function(win, side)
 end
 
 syncOrbBase = function(win)
+    if win._orbDragging then return end
+    if win._collapsed then return end
     pcall(function()
         local a = win._gui.AbsoluteSize
         if a and a.X > 0 then
@@ -1711,15 +1713,26 @@ local function collapse(win)
     for _, item in ipairs(win._shortcuts) do
         if item.frame and item.frame.Parent then item.frame.Visible = false end
     end
+    local k = ORB / math.max(1, win._sizeX)
     local sizeTi = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+    win._mainPosBeforeCollapse = win._main.Position
     win._mainTween = TweenService:Create(win._mainScale, sizeTi, {
-        Scale = ORB / math.max(1, win._sizeX),
+        Scale = k,
     })
     win._mainTween:Play()
     if win._mainCorner then
         win._cornerTween = TweenService:Create(win._mainCorner, sizeTi,
             { CornerRadius = UDim.new(0, ORB / 2) })
         win._cornerTween:Play()
+    end
+    -- 主面板向标题图标聚拢：收起时边框以图标为终点并围成圆形，而非直接消失
+    local ap = win._main.AbsolutePosition
+    if ap then
+        local tx = ap.X + (HEADER_PAD + TITLE_ICON / 2) * (1 - k)
+        local ty = ap.Y + (HEADER_H / 2) * (1 - k)
+        win._mainTweenPos = TweenService:Create(win._main, sizeTi,
+            { Position = UDim2.fromOffset(tx, ty) })
+        win._mainTweenPos:Play()
     end
     win._orb.Visible = true
     win._orb.GroupTransparency = 1
@@ -1763,6 +1776,11 @@ local function expand(win)
         win._cornerTween = TweenService:Create(win._mainCorner, ti,
             { CornerRadius = UDim.new(0, s(24)) })
         win._cornerTween:Play()
+    end
+    if win._mainPosBeforeCollapse then
+        win._posTween = TweenService:Create(win._main, ti,
+            { Position = win._mainPosBeforeCollapse })
+        win._posTween:Play()
     end
     task.delay(COLLAPSE_T * 0.7, function()
         if not win._collapsed and win._gui.Parent then
@@ -2106,21 +2124,70 @@ function Library.CreateWindow(opts)
     closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
     minBtn.MouseButton1Click:Connect(function() collapse(win) end)
 
+    -- 按住标题栏拖动整个窗口
+    local winDrag, winMoved, wsx, wsy, wox, woy
+    local winMoveConn, winEndConn
+    local function stopWinDrag()
+        if not winDrag then return end
+        winDrag = false
+        if winMoveConn then pcall(function() winMoveConn:Disconnect() end) winMoveConn = nil end
+        if winEndConn then pcall(function() winEndConn:Disconnect() end) winEndConn = nil end
+    end
+    header.InputBegan:Connect(function(input)
+        if win._collapsed then return end
+        local t = input.UserInputType
+        if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then return end
+        if winDrag then stopWinDrag() end
+        winDrag = true
+        winMoved = false
+        local m = UserInputService:GetMouseLocation()
+        wsx, wsy = m.X, m.Y
+        local ap = win._main.AbsolutePosition
+        wox, woy = ap.X, ap.Y
+        winMoveConn = UserInputService.InputChanged:Connect(function(i)
+            if not winDrag then return end
+            local it = i.UserInputType
+            if it == Enum.UserInputType.MouseMovement or it == Enum.UserInputType.Touch then
+                local m2 = UserInputService:GetMouseLocation()
+                local dx, dy = m2.X - wsx, m2.Y - wsy
+                if math.abs(dx) + math.abs(dy) > 3 then winMoved = true end
+                local vw, vh = viewport()
+                local nx = math.clamp(wox + dx, 0, math.max(0, vw - win._sizeX))
+                local ny = math.clamp(woy + dy, 0, math.max(0, vh - win._sizeY))
+                win._main.Position = UDim2.fromOffset(nx, ny)
+            end
+        end)
+        winEndConn = UserInputService.InputEnded:Connect(function(i)
+            local it = i.UserInputType
+            if it == Enum.UserInputType.MouseButton1 or it == Enum.UserInputType.Touch then
+                stopWinDrag()
+            end
+        end)
+    end)
+
     local orbDragging, orbMoved, orbStartX, orbStartY, orbOriginX, orbOriginY
     local orbMoveConn, orbEndConn
     local function stopOrbDrag()
         if not orbDragging then return end
         orbDragging = false
+        win._orbDragging = false
         if orbMoveConn then pcall(function() orbMoveConn:Disconnect() end) orbMoveConn = nil end
         if orbEndConn then pcall(function() orbEndConn:Disconnect() end) orbEndConn = nil end
     end
     orbHit.MouseButton1Down:Connect(function()
         if orbDragging then stopOrbDrag() end
         orbDragging = true
+        win._orbDragging = true
         orbMoved = false
         local m = UserInputService:GetMouseLocation()
         orbStartX, orbStartY = m.X, m.Y
         orbOriginX, orbOriginY = win._orbBaseX, win._orbBaseY
+        -- 拖拽开始先收掉残留的扩展/混合补间并吸附到收起基准位，避免起点抖动
+        if win._orbExtTween then pcall(function() win._orbExtTween:Cancel() end) win._orbExtTween = nil end
+        if win._orbBlendTween then pcall(function() win._orbBlendTween:Cancel() end) win._orbBlendTween = nil end
+        win._orbExt.Value = 0
+        win._orbBlend.Value = (win._orbSide == "left") and 0 or 1
+        applyOrbLayout(win)
         orbMoveConn = UserInputService.InputChanged:Connect(function(i)
             if not orbDragging then return end
             local t = i.UserInputType
