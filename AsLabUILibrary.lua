@@ -68,6 +68,7 @@ local PAD          = s(10)
 local GAP          = s(10)
 local MIN_BLOCK    = s(92)
 local PAD_IN       = s(12)
+local PAD_TOP      = s(2)
 local ROW_H        = s(34)
 local ROW_GAP      = s(8)
 local DETAIL_TOP   = s(42)
@@ -634,8 +635,8 @@ end
 buildDetail = function(win, ctrl)
     local layer = Instance.new("CanvasGroup", win._scroller)
     layer.Name = "Detail_" .. tostring(ctrl._opts.Title or "")
-    layer.Size = UDim2.fromOffset((win._controlW or win._sizeX) - PAD_IN * 2, (win._viewH or win._sizeY) - PAD_IN * 2)
-    layer.Position = UDim2.fromOffset(PAD_IN, PAD_IN)
+    layer.Size = UDim2.fromOffset((win._controlW or win._sizeX) - PAD_IN * 2, (win._viewH or win._sizeY) - PAD_TOP - PAD_IN)
+    layer.Position = UDim2.fromOffset(PAD_IN, PAD_TOP)
     layer.BackgroundTransparency = 1
     layer.GroupTransparency = 1
     layer.Visible = false
@@ -2254,8 +2255,8 @@ function Library:AddTab(name, icon)
 
     local container = Instance.new("CanvasGroup", self._scroller)
     container.Name = "Container_" .. name
-    container.Size = UDim2.fromOffset((self._controlW or self._sizeX) - PAD_IN * 2, (self._viewH or self._sizeY) - PAD_IN * 2)
-    container.Position = UDim2.fromOffset(PAD_IN, PAD_IN)
+    container.Size = UDim2.fromOffset((self._controlW or self._sizeX) - PAD_IN * 2, (self._viewH or self._sizeY) - PAD_TOP - PAD_IN)
+    container.Position = UDim2.fromOffset(PAD_IN, PAD_TOP)
     container.BackgroundTransparency = 1
     container.GroupTransparency = 0
     container.Visible = false
