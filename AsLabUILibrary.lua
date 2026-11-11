@@ -172,6 +172,60 @@ local function getHolder()
     return nil
 end
 
+-- ===========================================================================
+-- ConfigKey：把控件状态按 ConfigKey 保存到窗口对应 folder 的 ValueBase 中
+-- （DynamicCow 风格：配置以实例形式落在 <FolderName>/Config 文件夹里）
+-- ===========================================================================
+local function makeConfigValue(win, key, kind)
+    local folder = win and win._configFolder
+    if not (folder and key and key ~= "") then return nil end
+    local v
+    if kind == "Toggle" then
+        v = Instance.new("BoolValue", folder)
+    elseif kind == "Slider" then
+        v = Instance.new("NumberValue", folder)
+    elseif kind == "ColorPicker" then
+        v = Instance.new("Color3Value", folder)
+    else
+        v = Instance.new("StringValue", folder)
+    end
+    v.Name = key
+    return v
+end
+
+local function syncConfigValue(ctrl)
+    local v = ctrl and ctrl._configValue
+    if not v then return end
+    local value = ctrl._configCurrent
+    pcall(function()
+        if v:IsA("BoolValue") then v.Value = not not value
+        elseif v:IsA("NumberValue") then v.Value = tonumber(value) or 0
+        elseif v:IsA("Color3Value") then v.Value = value
+        elseif v:IsA("StringValue") then v.Value = tostring(value or "") end
+    end)
+end
+
+function Library:SaveConfig()
+    for _, ctrl in pairs(self._config or {}) do
+        if ctrl then syncConfigValue(ctrl) end
+    end
+    return self
+end
+
+function Library:LoadConfig()
+    for _, ctrl in pairs(self._config or {}) do
+        local v = ctrl and ctrl._configValue
+        if v and ctrl.Set then
+            pcall(function()
+                if v:IsA("BoolValue") then ctrl:Set(v.Value)
+                elseif v:IsA("NumberValue") then ctrl:Set(v.Value)
+                elseif v:IsA("Color3Value") then ctrl:Set(v.Value) end
+            end)
+        end
+    end
+    return self
+end
+
 local function makeGlass(parent, props)
     props = props or {}
     local Class = props.Class or "Frame"
@@ -256,13 +310,13 @@ local function makeBox(parent, w, text)
     label.TextYAlignment = Enum.TextYAlignment.Center
     label.BackgroundTransparency = 1
     label.Active = false
-    label.ZIndex = 2
+    label.ZIndex = 10002
     local hit = Instance.new("TextButton", box)
     hit.Size = UDim2.fromScale(1, 1)
     hit.BackgroundTransparency = 1
     hit.Text = ""
     hit.AutoButtonColor = false
-    hit.ZIndex = 3
+    hit.ZIndex = 10003
     local conflict = Instance.new("TextLabel", box)
     conflict.Name = "Conflict"
     conflict.AnchorPoint = Vector2.new(1, 0.5)
@@ -277,7 +331,7 @@ local function makeBox(parent, w, text)
     conflict.TextTruncate = Enum.TextTruncate.AtEnd
     conflict.BackgroundTransparency = 1
     conflict.Active = false
-    conflict.ZIndex = 4
+    conflict.ZIndex = 10004
     conflict:SetAttribute("_skipFade", true)
     return box, label, hit, conflict
 end
@@ -348,24 +402,96 @@ local function updateCanvas(win)
     end
 end
 
+-- ============================================================================
+-- GroupTransparency 兼容层
+-- 真实执行器（尤其移动端）对 CanvasGroup 的「渲染到纹理」支持不完整，
+-- 会导致整棵子树显示为灰色/空白。本库改用 Frame 承载玻璃容器，
+-- 并用软件方式模拟 GroupTransparency（按合成公式 1-(1-base)*(1-t) 递归重算子树透明度）。
+-- ============================================================================
+local groupState = setmetatable({}, { __mode = "k" })
+
+local function setGroupTransparency(container, t)
+    if not (container and container.Parent) then return end
+    t = math.clamp(t or 0, 0, 1)
+    local st = groupState[container]
+    if not st then st = { gt = 0, base = {} } ; groupState[container] = st end
+    local mult = 1 - t
+    local base = st.base
+    local nodes = { container }
+    local function collect(node)
+        for _, ch in ipairs(node:GetChildren()) do
+            if ch:IsA("GuiObject") then
+                nodes[#nodes + 1] = ch
+                collect(ch)
+            else
+                collect(ch)
+            end
+        end
+    end
+    collect(container)
+    for _, node in ipairs(nodes) do
+        if pcall(function() return node.BackgroundTransparency end) then
+            local cur = node.BackgroundTransparency
+            local b = base[node]
+            if not b then b = {}; base[node] = b end
+            if b.bg == nil then b.bg = cur end
+            node.BackgroundTransparency = 1 - (1 - b.bg) * mult
+        end
+        if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
+            local b = base[node]; if not b then b = {}; base[node] = b end
+            local cur = node.TextTransparency
+            if b.tt == nil then b.tt = cur end
+            node.TextTransparency = 1 - (1 - b.tt) * mult
+            local cs = node.TextStrokeTransparency
+            if b.ts == nil then b.ts = cs end
+            node.TextStrokeTransparency = 1 - (1 - b.ts) * mult
+        end
+        if node:IsA("ImageLabel") or node:IsA("ImageButton") or node:IsA("VideoFrame") then
+            local b = base[node]; if not b then b = {}; base[node] = b end
+            local cur = node.ImageTransparency
+            if b.it == nil then b.it = cur end
+            node.ImageTransparency = 1 - (1 - b.it) * mult
+        end
+        for _, ch in ipairs(node:GetChildren()) do
+            if ch:IsA("UIStroke") then
+                local b = base[ch]; if not b then b = {}; base[ch] = b end
+                local cur = ch.Transparency
+                if b.st == nil then b.st = cur end
+                ch.Transparency = 1 - (1 - b.st) * mult
+            end
+        end
+    end
+    st.gt = t
+end
+
+local function tweenGroup(container, target, ti, onDone)
+    if not (container and container.Parent) then return end
+    local proxy = container:FindFirstChild("__gtProxy")
+    if not proxy then
+        proxy = Instance.new("NumberValue", container)
+        proxy.Name = "__gtProxy"
+        proxy.Value = (groupState[container] and groupState[container].gt) or 0
+    end
+    ti = ti or TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local tw = TweenService:Create(proxy, ti, { Value = target })
+    local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
+        setGroupTransparency(container, proxy.Value)
+    end)
+    tw.Completed:Connect(function()
+        if conn then conn:Disconnect() end
+        pcall(setGroupTransparency, container, target)
+        pcall(onDone or function() end)
+    end)
+    tw:Play()
+    return tw
+end
+
 local fadeGen = setmetatable({}, { __mode = "k" })
 
 fadeGroup = function(group, target, onDone)
     if not (group and group.Parent) then return end
     fadeGen[group] = (fadeGen[group] or 0) + 1
-    local gen = fadeGen[group]
-    local ti = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    local tw = TweenService:Create(group, ti, { GroupTransparency = target })
-    if onDone then tw.Completed:Connect(function() pcall(onDone) end) end
-    tw:Play()
-    if target == 0 then
-        task.delay(0.4, function()
-            if group.Parent and fadeGen[group] == gen then
-                group.GroupTransparency = 0
-            end
-        end)
-    end
-    return tw
+    return tweenGroup(group, target, nil, onDone)
 end
 
 local function relayout(tab)
@@ -421,6 +547,7 @@ local function fireClick(ctrl)
         ctrl._state = not ctrl._state
         refreshToggle(ctrl, true)
         if opts.Callback then pcall(opts.Callback, ctrl._state) end
+        if ctrl._configValue then ctrl._configCurrent = ctrl._state; syncConfigValue(ctrl) end
     else
         if opts.Callback then pcall(opts.Callback) end
     end
@@ -495,14 +622,14 @@ createShortcut = function(win, ctrl)
         w = math.max(s(80), sz.X + s(28))
     end)
     local h = s(30)
-    local sc = Instance.new("CanvasGroup", win._gui)
+    local sc = Instance.new("Frame", win._gui)
     sc.Name = "Shortcut"
     sc.Size = UDim2.fromOffset(w, h)
     sc.AnchorPoint = Vector2.new(0.5, 0.5)
     sc.BackgroundColor3 = Style.Glass
     sc.BackgroundTransparency = 0.35
-    sc.GroupTransparency = 1
-    sc.ZIndex = 30
+    setGroupTransparency(sc, 1)
+    sc.ZIndex = 10030
     sc.ClipsDescendants = true
     local c = Instance.new("UICorner", sc)
     c.CornerRadius = UDim.new(0, s(9))
@@ -538,7 +665,7 @@ createShortcut = function(win, ctrl)
     label.TextYAlignment = Enum.TextYAlignment.Center
     label.BackgroundTransparency = 1
     label.Active = false
-    label.ZIndex = 2
+    label.ZIndex = 10002
 
     local press = Instance.new("Frame", sc)
     press.Size = UDim2.fromScale(1, 1)
@@ -546,14 +673,14 @@ createShortcut = function(win, ctrl)
     press.BackgroundTransparency = 1
     press.BorderSizePixel = 0
     press.Active = false
-    press.ZIndex = 1
+    press.ZIndex = 10001
 
     local hit = Instance.new("TextButton", sc)
     hit.Size = UDim2.fromScale(1, 1)
     hit.BackgroundTransparency = 1
     hit.Text = ""
     hit.AutoButtonColor = false
-    hit.ZIndex = 3
+    hit.ZIndex = 10003
 
     local uscale = Instance.new("UIScale", sc)
     uscale.Scale = 1
@@ -634,15 +761,15 @@ startListen = function(win, ctrl, label)
 end
 
 buildDetail = function(win, ctrl)
-    local layer = Instance.new("CanvasGroup", win._scroller)
+    local layer = Instance.new("Frame", win._scroller)
     layer.Name = "Detail_" .. tostring(ctrl._opts.Title or "")
     layer.Size = UDim2.fromOffset((win._controlW or win._sizeX) - PAD_IN * 2, (win._viewH or win._sizeY) - PAD_TOP - PAD_IN)
     layer.Position = UDim2.fromOffset(PAD_IN, PAD_TOP)
     layer.BackgroundTransparency = 1
-    layer.GroupTransparency = 1
+    setGroupTransparency(layer, 1)
     layer.Visible = false
     layer.ClipsDescendants = false
-    layer.ZIndex = 5
+    layer.ZIndex = 10005
     ctrl._detailLayer = layer
     ctrl._detailCount = 0
 
@@ -755,6 +882,7 @@ addDetailRow = function(win, ctrl, kind, opts)
             knob.Position = UDim2.new(f, -s(6), 0.5, -s(6))
             valLabel.Text = tostring(math.floor(value + 0.5))
             if fire and opts.Callback then pcall(opts.Callback, value) end
+            if obj and obj._configValue then obj._configCurrent = value; syncConfigValue(obj) end
         end
         local function applyFrac(px)
             local ax = track.AbsolutePosition.X
@@ -779,6 +907,15 @@ addDetailRow = function(win, ctrl, kind, opts)
         setValue(def, false)
         local obj = { Value = def }
         function obj:Set(v) setValue(v, false) end
+        if opts.ConfigKey and opts.ConfigKey ~= "" then
+            obj._configKey = opts.ConfigKey
+            obj._configKind = "Slider"
+            win._config = win._config or {}
+            win._config[opts.ConfigKey] = obj
+            obj._configValue = makeConfigValue(win, opts.ConfigKey, "Slider")
+            obj._configCurrent = def
+            syncConfigValue(obj)
+        end
         return obj
     elseif kind == "Toggle" then
         local box, label, hit = makeBox(row, s(52), "OFF")
@@ -806,10 +943,20 @@ addDetailRow = function(win, ctrl, kind, opts)
             st = not st
             refresh()
             if opts.Callback then pcall(opts.Callback, st) end
+            if obj and obj._configValue then obj._configCurrent = st; syncConfigValue(obj) end
         end)
         refresh()
         local obj = { Value = st }
-        function obj:Set(v) st = v refresh() end
+        function obj:Set(v) st = v; refresh(); if obj._configValue then obj._configCurrent = st; syncConfigValue(obj) end end
+        if opts.ConfigKey and opts.ConfigKey ~= "" then
+            obj._configKey = opts.ConfigKey
+            obj._configKind = "Toggle"
+            win._config = win._config or {}
+            win._config[opts.ConfigKey] = obj
+            obj._configValue = makeConfigValue(win, opts.ConfigKey, "Toggle")
+            obj._configCurrent = st
+            syncConfigValue(obj)
+        end
         return obj
     elseif kind == "Button" then
         local box, _, hit = makeBox(row, s(90), opts.Text or "Run")
@@ -828,17 +975,28 @@ addDetailRow = function(win, ctrl, kind, opts)
         hit.MouseButton1Click:Connect(function()
             if opts.Callback then pcall(opts.Callback) end
         end)
-        return {}
+        local obj = {}
+        if opts.ConfigKey and opts.ConfigKey ~= "" then
+            obj._configKey = opts.ConfigKey
+            obj._configKind = "Button"
+            win._config = win._config or {}
+            win._config[opts.ConfigKey] = obj
+            obj._configValue = makeConfigValue(win, opts.ConfigKey, "Button")
+            obj._configCurrent = opts.Text or opts.Title or ""
+            syncConfigValue(obj)
+            function obj:Set() if opts.Callback then pcall(opts.Callback) end end
+        end
+        return obj
     elseif kind == "ColorPicker" then
         local box, label, hit = makeBox(row, s(110), "")
         local swatch = Instance.new("Frame", box)
         swatch.Size = UDim2.new(1, -s(6), 1, -s(6))
         swatch.Position = UDim2.new(0, s(3), 0, s(3))
         swatch.BorderSizePixel = 0
-        swatch.ZIndex = 1
+        swatch.ZIndex = 10001
         local swc = Instance.new("UICorner", swatch)
         swc.CornerRadius = UDim.new(0, s(5))
-        label.ZIndex = 2
+        label.ZIndex = 10002
         label.TextColor3 = Color3.new(1, 1, 1)
         local lstroke = Instance.new("UIStroke", label)
         lstroke.Color = Color3.new(0, 0, 0)
@@ -861,7 +1019,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         })
         panel.ClipsDescendants = true
         panel.Visible = false
-        panel.ZIndex = 40
+        panel.ZIndex = 10040
         local pst = Instance.new("UIStroke", panel)
         pst.Color = Style.BlockStroke
         pst.Transparency = 0.4
@@ -911,7 +1069,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         cursor.Size = UDim2.fromOffset(s(10), s(10))
         cursor.BackgroundTransparency = 1
         cursor.BorderSizePixel = 0
-        cursor.ZIndex = 3
+        cursor.ZIndex = 10003
         local cc = Instance.new("UICorner", cursor)
         cc.CornerRadius = UDim.new(1, 0)
         local cstroke = Instance.new("UIStroke", cursor)
@@ -982,6 +1140,7 @@ addDetailRow = function(win, ctrl, kind, opts)
             cursor.Position = UDim2.new(sat, -s(5), 1 - val, -s(5))
             hcur.Position = UDim2.new(h, -s(2), 0.5, -s(8))
             if fire and opts.Callback then pcall(opts.Callback, c) end
+            if obj and obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
         end
         local function grab(apply)
             local m = UserInputService:GetMouseLocation()
@@ -1017,7 +1176,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         svHit.BackgroundTransparency = 1
         svHit.Text = ""
         svHit.AutoButtonColor = false
-        svHit.ZIndex = 5
+        svHit.ZIndex = 10005
         svHit.MouseButton1Down:Connect(function() grab(setSV) end)
         local hueHit = Instance.new("TextButton", panel)
         hueHit.Size = UDim2.fromOffset(svW, s(12))
@@ -1025,7 +1184,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         hueHit.BackgroundTransparency = 1
         hueHit.Text = ""
         hueHit.AutoButtonColor = false
-        hueHit.ZIndex = 5
+        hueHit.ZIndex = 10005
         hueHit.MouseButton1Down:Connect(function() grab(setHue) end)
 
         hit.MouseButton1Click:Connect(function()
@@ -1041,9 +1200,19 @@ addDetailRow = function(win, ctrl, kind, opts)
             if typeof(c) == "Color3" then
                 h, sat, val = c:ToHSV()
                 refresh(false)
+                if obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
             end
         end
         function obj:Get() return Color3.fromHSV(h, sat, val) end
+        if opts.ConfigKey and opts.ConfigKey ~= "" then
+            obj._configKey = opts.ConfigKey
+            obj._configKind = "ColorPicker"
+            win._config = win._config or {}
+            win._config[opts.ConfigKey] = obj
+            obj._configValue = makeConfigValue(win, opts.ConfigKey, "ColorPicker")
+            obj._configCurrent = def
+            syncConfigValue(obj)
+        end
         return obj
     end
     return {}
@@ -1071,7 +1240,7 @@ openDetail = function(win, ctrl)
     end
     local layer = ctrl._detailLayer
     layer.Visible = true
-    layer.GroupTransparency = 1
+    setGroupTransparency(layer, 1)
     fadeGroup(layer, 0)
     if win._scroller then win._scroller.CanvasPosition = Vector2.new(0, 0) end
     win._detail = ctrl
@@ -1096,7 +1265,7 @@ closeDetail = function(win)
     local cont = win._detailContainer
     if cont then
         cont.Visible = true
-        cont.GroupTransparency = 1
+        setGroupTransparency(cont, 1)
         fadeGroup(cont, 0)
     end
     win._detailContainer = nil
@@ -1153,6 +1322,28 @@ local function addControl(tab, kind, opts)
     })
     block.AnchorPoint = Vector2.new(0.5, 0.5)
     local ctrl = { _tab = tab, _kind = kind, _block = block, _opts = opts, _state = opts.Default or false }
+    local cwin = tab._win
+
+    function ctrl:Set(v)
+        if kind == "Toggle" then
+            ctrl._state = not not v
+            refreshToggle(ctrl, false)
+            if opts.Callback then pcall(opts.Callback, ctrl._state) end
+        else
+            if opts.Callback then pcall(opts.Callback) end
+        end
+        syncShortcut(ctrl)
+    end
+
+    if opts.ConfigKey and opts.ConfigKey ~= "" then
+        ctrl._configKey = opts.ConfigKey
+        ctrl._configKind = kind
+        cwin._config = cwin._config or {}
+        cwin._config[opts.ConfigKey] = ctrl
+        ctrl._configValue = makeConfigValue(cwin, opts.ConfigKey, kind)
+        ctrl._configCurrent = (kind == "Toggle") and ctrl._state or (opts.Title or "")
+        syncConfigValue(ctrl)
+    end
 
     local silver = Instance.new("Frame", block)
     silver.Name = "Silver"
@@ -1593,14 +1784,14 @@ pushToast = function(win, opts)
     local tH = #titleLines * (tSize + s(4))
     local iH = #infoLines * (iSize + s(4))
     local h = padY * 2 + tH + (#infoLines > 0 and (s(4) + iH) or 0)
-    local frame = Instance.new("CanvasGroup", win._gui)
+    local frame = Instance.new("Frame", win._gui)
     frame.Name = "Notify"
     frame.Size = UDim2.fromOffset(w, h)
     frame.BackgroundColor3 = Style.Glass
     frame.BackgroundTransparency = 0.32
-    frame.GroupTransparency = 1
+    setGroupTransparency(frame, 1)
     frame.BorderSizePixel = 0
-    frame.ZIndex = 60
+    frame.ZIndex = 10060
     frame.ClipsDescendants = true
     local corner = Instance.new("UICorner", frame)
     corner.CornerRadius = UDim.new(0, s(12))
@@ -1627,7 +1818,7 @@ pushToast = function(win, opts)
     tLabel.TextWrapped = false
     tLabel.BackgroundTransparency = 1
     tLabel.Active = false
-    tLabel.ZIndex = 2
+    tLabel.ZIndex = 10002
     local iLabel = Instance.new("TextLabel", frame)
     iLabel.Size = UDim2.fromOffset(w - padX * 2, iH)
     iLabel.Position = UDim2.fromOffset(padX, padY + tH + s(4))
@@ -1640,7 +1831,7 @@ pushToast = function(win, opts)
     iLabel.TextWrapped = false
     iLabel.BackgroundTransparency = 1
     iLabel.Active = false
-    iLabel.ZIndex = 2
+    iLabel.ZIndex = 10002
     local item = { frame = frame, h = h, _entering = true }
     table.insert(win._toasts, item)
     local y = NOTIFY_MARGIN
@@ -1651,16 +1842,17 @@ pushToast = function(win, opts)
     frame.Position = UDim2.fromOffset(-w - s(24), y)
     local enter = TweenService:Create(frame,
         TweenInfo.new(0.38, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        { Position = UDim2.fromOffset(NOTIFY_MARGIN, y), GroupTransparency = 0 })
+        { Position = UDim2.fromOffset(NOTIFY_MARGIN, y) })
     enter.Completed:Connect(function() item._entering = false end)
     enter:Play()
+    tweenGroup(frame, 0, TweenInfo.new(0.38, Enum.EasingStyle.Quart, Enum.EasingDirection.Out))
     task.delay(math.max(0.2, dur), function()
         if not (frame and frame.Parent) then return end
         local out = TweenService:Create(frame,
             TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-            { Position = UDim2.fromOffset(-w - s(24), frame.Position.Y.Offset),
-              GroupTransparency = 1 })
+            { Position = UDim2.fromOffset(-w - s(24), frame.Position.Y.Offset) })
         out:Play()
+        tweenGroup(frame, 1, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In))
         out.Completed:Connect(function()
             for i, it in ipairs(win._toasts) do
                 if it == item then table.remove(win._toasts, i) break end
@@ -1735,20 +1927,18 @@ local function collapse(win)
         win._mainTweenPos:Play()
     end
     win._orb.Visible = true
-    win._orb.GroupTransparency = 1
-    win._orbTween = TweenService:Create(win._orb,
-        TweenInfo.new(COLLAPSE_T * 0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { GroupTransparency = 0 })
-    win._orbTween:Play()
+    setGroupTransparency(win._orb, 1)
+    win._orbTween = tweenGroup(win._orb, 0,
+        TweenInfo.new(COLLAPSE_T * 0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out))
     task.delay(COLLAPSE_T + 0.02, function()
         if not win._collapsed and win._main and win._main.Parent then
-            win._main.GroupTransparency = 0
+            -- main 为 Frame，无 GroupTransparency（始终可见）
         end
         if win._panelAnimGen ~= gen then return end
         if win._collapsed and win._gui.Parent then
             win._main.Visible = false
             win._orb.Visible = true
-            win._orb.GroupTransparency = 0
+            setGroupTransparency(win._orb, 0)
             applyOrbLayout(win)
         end
         win._panelAnimating = false
@@ -1767,7 +1957,7 @@ local function expand(win)
     clearCapsule(win, true)
     cancelAnim(win)
     win._main.Visible = true
-    win._main.GroupTransparency = 0
+    -- main 为 Frame，无 GroupTransparency（始终可见）
     win._orb.Visible = false
     local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
     win._mainTween = TweenService:Create(win._mainScale, ti, { Scale = 1 })
@@ -1791,7 +1981,7 @@ local function expand(win)
     end)
     task.delay(COLLAPSE_T + 0.02, function()
         if win._main and win._main.Parent and not win._collapsed then
-            win._main.GroupTransparency = 0
+            -- main 为 Frame，无 GroupTransparency（始终可见）
         end
         if win._panelAnimGen ~= gen then return end
         win._panelAnimating = false
@@ -1811,15 +2001,24 @@ function Library.CreateWindow(opts)
     local holder = getHolder()
     if not holder then return nil end
 
-    local gui = Instance.new("ScreenGui", holder)
-    gui.Name = "AsLabUI"
+    -- Folder（DynamicCow 风格）：主文件夹名称为 AsLab。
+    -- 本地文件夹用于落地下载的资源（背景图等）；同名 Roblox Folder 用于整理 GUI 层级。
+    local FolderName = opts.Folder or "AsLab"
+    pcall(function() makefolder(FolderName) end)
+    local root = Instance.new("Folder", holder)
+    root.Name = FolderName
+    local configFolder = Instance.new("Folder", root)
+    configFolder.Name = "Config"
+
+    local gui = Instance.new("ScreenGui", root)
+    gui.Name = FolderName .. "UI"
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
     local main = makeGlass(gui, {
         Name = "Main",
-        Class = "CanvasGroup",
+        Class = "Frame",
         Size = Size,
         Position = UDim2.new(0.5, -Size.X.Offset / 2, 0.5, -Size.Y.Offset / 2),
         Transparency = Style.GlassTransparency,
@@ -1827,47 +2026,46 @@ function Library.CreateWindow(opts)
         Highlight = 0.82,
     })
     main.AnchorPoint = Vector2.new(0, 0)
-    main.GroupTransparency = 0
-    main.ZIndex = 1
-    main.ClipsDescendants = false
+    -- main 为 Frame，无 GroupTransparency（始终可见）
+    main.ZIndex = 10001
+    main.ClipsDescendants = true  -- 裁切到窗口圆角，背景图随窗口圆角
     local mainScale = Instance.new("UIScale", main)
     mainScale.Scale = 1
 
+    -- 背景：先建占位，图片下载到本地对应 folder 后再加载（见下方下载与 gate 逻辑）
     local background = nil
-    do
-        local bgUrl, bgVideo
-        if type(Background) == "string" then
-            bgUrl = Background
-        elseif type(Background) == "table" then
-            bgUrl = Background.Url or Background.url
-            bgVideo = not not Background.Video
+    local bgUrl, bgVideo
+    if type(Background) == "string" then
+        bgUrl = Background
+    elseif type(Background) == "table" then
+        bgUrl = Background.Url or Background.url
+        bgVideo = not not Background.Video
+    end
+    if type(bgUrl) == "string" and bgUrl ~= "" then
+        if not bgVideo then
+            bgVideo = bgUrl:match("%.mp4$") or bgUrl:match("%.webm$") or bgUrl:match("%.mov$")
         end
-        if type(bgUrl) == "string" and bgUrl ~= "" then
-            if not bgVideo then
-                bgVideo = bgUrl:match("%.mp4$") or bgUrl:match("%.webm$") or bgUrl:match("%.mov$")
-            end
-            if bgVideo then
-                background = Instance.new("VideoFrame", main)
-                background.Video = bgUrl
-                background.Looped = true
-                background.Playing = true
-                background.Volume = 0
-            else
-                background = Instance.new("ImageLabel", main)
-                background.Image = bgUrl
-                background.ScaleType = Enum.ScaleType.Crop
-                background.ImageColor3 = Color3.new(1, 1, 1)
-            end
-            background.Name = "Background"
-            background.Size = UDim2.fromScale(1, 1)
-            background.Position = UDim2.fromOffset(0, 0)
-            background.BackgroundTransparency = 1
-            background.BorderSizePixel = 0
-            background.ZIndex = 0
-            background.ClipsDescendants = true
-            local bcorner = Instance.new("UICorner", background)
-            bcorner.CornerRadius = UDim.new(0, s(24))
+        if bgVideo then
+            background = Instance.new("VideoFrame", main)
+            background.Video = bgUrl
+            background.Looped = true
+            background.Playing = true
+            background.Volume = 0
+        else
+            background = Instance.new("ImageLabel", main)
+            background.Image = bgUrl
+            background.ScaleType = Enum.ScaleType.Crop
+            background.ImageColor3 = Color3.new(1, 1, 1)
         end
+        background.Name = "Background"
+        background.Size = UDim2.fromScale(1, 1)
+        background.Position = UDim2.fromOffset(0, 0)
+        background.BackgroundTransparency = 1
+        background.BorderSizePixel = 0
+        background.ZIndex = 10000
+        background.ClipsDescendants = true
+        local bcorner = Instance.new("UICorner", background)
+        bcorner.CornerRadius = UDim.new(0, s(24))
     end
 
     local header = Instance.new("Frame", main)
@@ -1947,7 +2145,7 @@ function Library.CreateWindow(opts)
     scroller.ScrollingDirection = Enum.ScrollingDirection.Y
     scroller.CanvasSize = UDim2.fromOffset(0, 0)
     scroller.ClipsDescendants = true
-    scroller.ZIndex = 2
+    scroller.ZIndex = 10002
 
     local footer = Instance.new("Frame", main)
     footer.Name = "Footer"
@@ -1955,7 +2153,7 @@ function Library.CreateWindow(opts)
     footer.Position = UDim2.new(0, PAD / 2, 1, -FOOTER_H - PAD)
     footer.BackgroundTransparency = 1
     footer.BorderSizePixel = 0
-    footer.ZIndex = 6
+    footer.ZIndex = 10006
     local footerSep = Instance.new("Frame", footer)
     footerSep.Name = "FooterSeparator"
     footerSep.Size = UDim2.new(0, SIDEBAR_W + TAB_AREA_GAP / 2 + 1 + PAD / 2, 0, 1)
@@ -1972,7 +2170,7 @@ function Library.CreateWindow(opts)
         b.BackgroundTransparency = 1
         b.Text = ""
         b.AutoButtonColor = false
-        b.ZIndex = 7
+        b.ZIndex = 10007
         local ic = Instance.new("ImageLabel", b)
         ic.Name = "Icon"
         ic.Size = UDim2.new(0.68, 0, 0.68, 0)
@@ -1992,7 +2190,7 @@ function Library.CreateWindow(opts)
     local closeBtn = makeFooterButton("Close", "x", fbtnX, "X")
     local minBtn = makeFooterButton("Minimize", "minimize", fbtnX + fbtn + s(10), "_")
 
-    local orb = Instance.new("CanvasGroup", gui)
+    local orb = Instance.new("Frame", gui)
     orb.Name = "Orb"
     orb.Size = UDim2.fromOffset(ORB, ORB)
     local vw, vh = viewport()
@@ -2002,9 +2200,9 @@ function Library.CreateWindow(opts)
     orb.AnchorPoint = Vector2.new(0, 0)
     orb.BackgroundColor3 = Style.Glass
     orb.BackgroundTransparency = Style.GlassTransparency
-    orb.GroupTransparency = 1
+    setGroupTransparency(orb, 1)
     orb.Visible = false
-    orb.ZIndex = 50
+    orb.ZIndex = 10050
     orb.ClipsDescendants = true
     local orbCorner = Instance.new("UICorner", orb)
     orbCorner.CornerRadius = UDim.new(0, ORB / 2)
@@ -2038,7 +2236,7 @@ function Library.CreateWindow(opts)
     orbIcon.Position = UDim2.fromOffset(ORB * 0.22, ORB * 0.22)
     orbIcon.BackgroundTransparency = 1
     orbIcon.Active = false
-    orbIcon.ZIndex = 51
+    orbIcon.ZIndex = 10051
     applyIcon(orbIcon, TitleIcon)
     local orbInfo = Instance.new("TextLabel", orb)
     orbInfo.Name = "OrbInfo"
@@ -2054,7 +2252,7 @@ function Library.CreateWindow(opts)
     orbInfo.TextTruncate = Enum.TextTruncate.AtEnd
     orbInfo.BackgroundTransparency = 1
     orbInfo.Active = false
-    orbInfo.ZIndex = 51
+    orbInfo.ZIndex = 10051
     orbInfo:SetAttribute("_skipFade", true)
     local orbHit = Instance.new("TextButton", orb)
     orbHit.Name = "Hit"
@@ -2062,7 +2260,7 @@ function Library.CreateWindow(opts)
     orbHit.BackgroundTransparency = 1
     orbHit.Text = ""
     orbHit.AutoButtonColor = false
-    orbHit.ZIndex = 52
+    orbHit.ZIndex = 10052
 
     local orbExt = Instance.new("NumberValue", gui)
     orbExt.Name = "OrbExt"
@@ -2073,6 +2271,10 @@ function Library.CreateWindow(opts)
 
     local win = {
         _gui = gui,
+        _folder = root,
+        _folderName = FolderName,
+        _configFolder = configFolder,
+        _config = {},
         _main = main,
         _mainScale = mainScale,
         _mainCorner = main:FindFirstChildOfClass("UICorner"),
@@ -2243,12 +2445,39 @@ function Library.CreateWindow(opts)
         end
     end)
 
-    task.delay(0, function()
-        if gui and gui.Parent then
+    -- 显示主 UI：背景图未下载完成前不显示主 UI
+    local revealed = false
+    local function revealMain()
+        if revealed then return end
+        revealed = true
+        if gui and gui.Parent and win._main and win._main.Parent then
+            win._main.Visible = true
             pcall(function() syncOrbBase(win) end)
             pcall(function() win:_fadeIn() end)
         end
-    end)
+    end
+
+    if background and background:IsA("ImageLabel") and type(bgUrl) == "string" and bgUrl ~= "" then
+        -- 先把主窗口藏起来，等背景图下载到本地对应 folder 完成后再显示
+        win._main.Visible = false
+        task.spawn(function()
+            local ok, data = pcall(function() return game:HttpGet(bgUrl) end)
+            if ok and type(data) == "string" and #data > 0 then
+                -- 下载到本地对应名称 folder 中存储
+                pcall(function()
+                    makefolder(FolderName)
+                    writefile(FolderName .. "/background.png", data)
+                end)
+                local asset
+                pcall(function() asset = getcustomasset(FolderName .. "/background.png") end)
+                if asset then background.Image = asset end
+            end
+            revealMain()
+        end)
+        task.delay(12, revealMain)  -- 兜底：最长等待 12 秒
+    else
+        revealMain()
+    end
 
     return win
 end
@@ -2261,7 +2490,7 @@ function Library:_fadeIn()
     self._fadeGen = (self._fadeGen or 0) + 1
     local gen = self._fadeGen
     if self._main and self._main.Parent then
-        self._main.GroupTransparency = 0
+        -- main 为 Frame，无 GroupTransparency（始终可见）
     end
     local scale = self._mainScale
     if not (scale and scale.Parent) then return end
@@ -2274,7 +2503,7 @@ function Library:_fadeIn()
     task.delay(0.55, function()
         if self._fadeGen ~= gen then return end
         if scale and scale.Parent then scale.Scale = 1 end
-        if self._main and self._main.Parent then self._main.GroupTransparency = 0 end
+        if self._main and self._main.Parent then end -- main 为 Frame，无 GroupTransparency（始终可见）
     end)
 end
 
@@ -2285,7 +2514,7 @@ function Library:_finishFadeIn()
         self._fadeTween = nil
     end
     if self._main and self._main.Parent then
-        self._main.GroupTransparency = 0
+        -- main 为 Frame，无 GroupTransparency（始终可见）
     end
 end
 
@@ -2299,7 +2528,7 @@ function Library:AddTab(name, icon)
     row.Text = ""
     row.AutoButtonColor = false
     row.LayoutOrder = idx
-    row.ZIndex = 2
+    row.ZIndex = 10002
 
     local sel = Instance.new("Frame", row)
     sel.Name = "TabSel"
@@ -2309,7 +2538,7 @@ function Library:AddTab(name, icon)
     sel.BackgroundTransparency = 1
     sel.BorderSizePixel = 0
     sel.Visible = false
-    sel.ZIndex = 1
+    sel.ZIndex = 10001
     sel:SetAttribute("_skipFade", true)
     local selCorner = Instance.new("UICorner", sel)
     selCorner.CornerRadius = Cfg.TabSelCorner
@@ -2336,7 +2565,7 @@ function Library:AddTab(name, icon)
         ticon.AnchorPoint = Vector2.new(0, 0.5)
         ticon.BackgroundTransparency = 1
         ticon.ImageColor3 = Cfg.TabInactiveColor
-        ticon.ZIndex = 3
+        ticon.ZIndex = 10003
         applyIcon(ticon, icon, Cfg.TabInactiveColor)
     end
 
@@ -2349,7 +2578,7 @@ function Library:AddTab(name, icon)
     tname.Font = Style.Font
     tname.TextYAlignment = Enum.TextYAlignment.Center
     tname.TextXAlignment = Enum.TextXAlignment.Left
-    tname.ZIndex = 3
+    tname.ZIndex = 10003
     if hasIcon then
         local x = s(Cfg.TabRowPadX + Cfg.TabIconSize + Cfg.TabTextGap)
         tname.Size = UDim2.new(1, -x, 1, 0)
@@ -2359,12 +2588,12 @@ function Library:AddTab(name, icon)
         tname.Position = UDim2.new(0, s(Cfg.TabRowPadX), 0, 0)
     end
 
-    local container = Instance.new("CanvasGroup", self._scroller)
+    local container = Instance.new("Frame", self._scroller)
     container.Name = "Container_" .. name
     container.Size = UDim2.fromOffset((self._controlW or self._sizeX) - PAD_IN * 2, (self._viewH or self._sizeY) - PAD_TOP - PAD_IN)
     container.Position = UDim2.fromOffset(PAD_IN, PAD_TOP)
     container.BackgroundTransparency = 1
-    container.GroupTransparency = 0
+    setGroupTransparency(container, 0)
     container.Visible = false
     container.ClipsDescendants = false
 
