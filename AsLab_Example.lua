@@ -13,7 +13,7 @@ local TabGeneral = Win:AddTab("General", "settings")
 local TabVisual = Win:AddTab("Appearance", "palette")
 local TabSystem = Win:AddTab("System", "cpu")
 
-TabGeneral:AddToggle({ Title = "Auto Save", Icon = "save", Default = true, Callback = function(v)
+TabGeneral:AddToggle({ Title = "Auto Save", Icon = "save", Default = true, ConfigKey = "auto_save", Callback = function(v)
     print("Auto Save:", v)
 end })
 
@@ -37,7 +37,7 @@ local Boost = TabGeneral:AddToggle({ Title = "Boost", Icon = "gauge", Default = 
     print("Boost:", v)
 end })
 
-Boost:AddSlider({ Title = "Speed", Min = 0, Max = 100, Default = 50, Callback = function(v)
+Boost:AddSlider({ Title = "Speed", Min = 0, Max = 100, Default = 50, ConfigKey = "boost_speed", Callback = function(v)
     print("Speed:", v)
 end })
 
@@ -69,11 +69,11 @@ local ESP = TabSystem:AddToggle({ Title = "ESP", Icon = "eye", Default = false, 
     print("ESP:", v)
 end })
 
-ESP:AddToggle({ Title = "Highlight", Default = true, Callback = function(v)
+ESP:AddToggle({ Title = "Highlight", Default = true, ConfigKey = "esp_highlight", Callback = function(v)
     print("Highlight:", v)
 end })
 
-ESP:AddColorPicker({ Title = "Highlight Color", Default = Color3.fromRGB(255, 96, 96), Callback = function(c)
+ESP:AddColorPicker({ Title = "Highlight Color", Default = Color3.fromRGB(255, 96, 96), ConfigKey = "esp_color", Callback = function(c)
     print("Highlight Color:", c)
 end })
 
@@ -102,5 +102,9 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
         Win:ShowNotify({ Title = "Key N", Info = "Minimize the window and press N to see the orb capsule", Time = 5 })
     end
 end)
+
+-- 演示 ConfigKey：把带 ConfigKey 的控件状态落盘到 AsLab/Config 文件夹
+Win:SaveConfig()
+Win:LoadConfig()
 
 print("AsLab UI loaded, window fading in...")
