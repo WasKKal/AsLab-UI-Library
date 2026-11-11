@@ -2,7 +2,7 @@ local Library = loadstring(game:HttpGet("https://ghfast.top/https://raw.githubus
 Library.PreloadLucide()
 
 local Win = Library.CreateWindow({
-    Title = "Window Title",
+    Title = "Im Title",
     TitleIcon = "layout-grid",
     Size = UDim2.fromOffset(540, 400),
     Info = "Info Bar",
