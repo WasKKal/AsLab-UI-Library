@@ -899,6 +899,8 @@ addDetailRow = function(win, ctrl, kind, opts)
         thc.CornerRadius = UDim.new(1, 0)
 
         local value = def
+        -- tween 引用保存在普通 Lua 闭包变量中（真实 Roblox 不允许给 Instance 挂自定义成员）
+        local fillTween = nil
         local function clampFrac(f)
             if f < 0 then f = 0 elseif f > 1 then f = 1 end
             return f
@@ -924,12 +926,12 @@ addDetailRow = function(win, ctrl, kind, opts)
         end
         local function refresh(animate)
             local f = (getRange() > 0) and clampFrac((value - minV) / getRange()) or 0
-            if fill._tween then pcall(function() fill._tween:Cancel() end) end
+            if fillTween then pcall(function() fillTween:Cancel() end) fillTween = nil end
             if animate then
-                fill._tween = TweenService:Create(fill,
+                fillTween = TweenService:Create(fill,
                     TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                     { Size = UDim2.new(f, 0, 1, 0) })
-                fill._tween:Play()
+                fillTween:Play()
             else
                 fill.Size = UDim2.new(f, 0, 1, 0)
             end
