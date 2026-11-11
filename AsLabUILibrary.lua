@@ -62,8 +62,8 @@ local Cfg = {
 
 local SIDEBAR_W    = s(Cfg.TabWidth)
 local TAB_AREA_GAP = s(Cfg.TabAreaGap)
-local HEADER_H     = s(64)
-local HEADER_PAD   = s(24)
+local HEADER_H     = s(58)
+local HEADER_PAD   = s(16)
 local PAD          = s(10)
 local GAP          = s(10)
 local MIN_BLOCK    = s(92)
@@ -74,6 +74,10 @@ local DETAIL_TOP   = s(42)
 local HOLD_TIME    = 0.45
 local FOOTER_H     = s(38)
 local ORB          = s(52)
+local TITLE_ICON   = s(28)
+-- 收起时 orb 应停在主面板标题图标中心，而非窗口左上角
+local TITLE_ICON_DX = HEADER_PAD + TITLE_ICON / 2 - ORB / 2
+local TITLE_ICON_DY = HEADER_H / 2 - ORB / 2
 local COLLAPSE_T   = 0.38
 local NOTIFY_MAXCHARS = 25
 local NOTIFY_MARGIN = s(16)
@@ -1477,7 +1481,7 @@ syncOrbBase = function(win)
         local a = win._gui.AbsoluteSize
         if a and a.X > 0 then
             local p = win._main.AbsolutePosition
-            if p then win._orbBaseX, win._orbBaseY = p.X, p.Y end
+            if p then win._orbBaseX, win._orbBaseY = p.X + TITLE_ICON_DX, p.Y + TITLE_ICON_DY end
         end
     end)
     win._orbSide = computeSide(win)
@@ -1813,8 +1817,9 @@ function Library.CreateWindow(opts)
     header.Size = UDim2.new(1, 0, 0, HEADER_H)
     header.BackgroundTransparency = 1
     header.BorderSizePixel = 0
+    header.ClipsDescendants = true
 
-    local iconSize = s(28)
+    local iconSize = TITLE_ICON
     local titleIcon = Instance.new("ImageLabel", header)
     titleIcon.Name = "TitleIcon"
     titleIcon.Size = UDim2.fromOffset(iconSize, iconSize)
@@ -1825,24 +1830,28 @@ function Library.CreateWindow(opts)
     local textLeft = HEADER_PAD + iconSize + s(10)
     local titleLabel = Instance.new("TextLabel", header)
     titleLabel.Name = "TitleLabel"
-    titleLabel.Size = UDim2.new(1, -textLeft - s(44), 0, s(26))
+    titleLabel.Size = UDim2.new(1, -textLeft - s(24), 0, s(26))
     titleLabel.Position = UDim2.new(0, textLeft, 0, s(10))
     titleLabel.Text = Title
     titleLabel.Font = Style.Font
     titleLabel.TextSize = s(18)
     titleLabel.TextColor3 = Style.Text
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.TextWrapped = false
+    titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
     titleLabel.BackgroundTransparency = 1
 
     local infoLabel = Instance.new("TextLabel", header)
     infoLabel.Name = "InfoLabel"
-    infoLabel.Size = UDim2.new(1, -textLeft - s(44), 0, s(18))
+    infoLabel.Size = UDim2.new(1, -textLeft - s(24), 0, s(18))
     infoLabel.Position = UDim2.new(0, textLeft, 0, s(36))
     infoLabel.Text = InfoText
     infoLabel.Font = Style.Font
     infoLabel.TextSize = s(12)
     infoLabel.TextColor3 = Style.SubText
     infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    infoLabel.TextWrapped = false
+    infoLabel.TextTruncate = Enum.TextTruncate.AtEnd
     infoLabel.BackgroundTransparency = 1
 
     local bodyY = HEADER_H
@@ -1855,8 +1864,8 @@ function Library.CreateWindow(opts)
 
     local sep = Instance.new("Frame", main)
     sep.Name = "TabSeparator"
-    sep.Size = UDim2.new(0, 1, 1, -bodyY - FOOTER_H - PAD + 1)
-    sep.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP / 2, 0, bodyY)
+    sep.Size = UDim2.new(0, 1, 1, -FOOTER_H - PAD + 1)
+    sep.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP / 2, 0, 0)
     sep.BackgroundColor3 = Cfg.DividerColor
     sep.BorderSizePixel = 0
 
@@ -1921,7 +1930,7 @@ function Library.CreateWindow(opts)
         end
         return b
     end
-    local fbtnX = s(8)
+    local fbtnX = s(2)
     local closeBtn = makeFooterButton("Close", "x", fbtnX, "X")
     local minBtn = makeFooterButton("Minimize", "minimize", fbtnX + fbtn + s(10), "_")
 
@@ -1929,8 +1938,8 @@ function Library.CreateWindow(opts)
     orb.Name = "Orb"
     orb.Size = UDim2.fromOffset(ORB, ORB)
     local vw, vh = viewport()
-    local orbBaseX = vw / 2 - Size.X.Offset / 2
-    local orbBaseY = vh / 2 - Size.Y.Offset / 2
+    local orbBaseX = vw / 2 - Size.X.Offset / 2 + TITLE_ICON_DX
+    local orbBaseY = vh / 2 - Size.Y.Offset / 2 + TITLE_ICON_DY
     orb.Position = UDim2.fromOffset(orbBaseX, orbBaseY)
     orb.AnchorPoint = Vector2.new(0, 0)
     orb.BackgroundColor3 = Style.Glass
