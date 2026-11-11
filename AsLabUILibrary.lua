@@ -26,7 +26,23 @@ local Style = {
     BlockStroke = Color3.fromRGB(180, 186, 200),
     BlockStrokeTransparency = 0.35,
     BlockStrokeThickness = 1.4,
+    -- Slider（照抄 DynamicCow）
+    SliderFill = Color3.fromRGB(120, 160, 255),
+    SliderFillDarken = 0.28,
+    SliderTrack = Color3.fromRGB(58, 58, 70),
+    SliderTrackTransparency = 0.35,
+    SliderThumb = Color3.fromRGB(245, 245, 248),
+    SliderThumbSize = 16,
 }
+
+local function darkenColor(c, amt)
+    amt = amt or 0
+    return Color3.new(
+        math.clamp(c.R * (1 - amt), 0, 1),
+        math.clamp(c.G * (1 - amt), 0, 1),
+        math.clamp(c.B * (1 - amt), 0, 1)
+    )
+end
 
 do
     local function pickFont()
@@ -697,10 +713,11 @@ createShortcut = function(win, ctrl)
         dragging = false
         if moveConn then pcall(function() moveConn:Disconnect() end) moveConn = nil end
         if endConn then pcall(function() endConn:Disconnect() end) endConn = nil end
-        if sc and sc.Parent and ctrl._kind == "Button" then
+        if sc and sc.Parent then
+            -- 按压反馈：所有控件类型的快捷按钮统一做缩放回弹 + 暗色叠层淡出过渡
             pcall(function()
-                TweenService:Create(uscale, TweenInfo.new(0.18), { Scale = 1 }):Play()
-                TweenService:Create(press, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
+                TweenService:Create(uscale, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+                TweenService:Create(press, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
             end)
         end
         if fire and not moved then fireClick(ctrl) end
@@ -712,10 +729,9 @@ createShortcut = function(win, ctrl)
         local m = UserInputService:GetMouseLocation()
         startX, startY = m.X, m.Y
         originX, originY = sc.Position.X.Offset, sc.Position.Y.Offset
-        if ctrl._kind == "Button" then
-            TweenService:Create(uscale, TweenInfo.new(0.1), { Scale = 0.92 }):Play()
-            TweenService:Create(press, TweenInfo.new(0.1), { BackgroundTransparency = 0.25 }):Play()
-        end
+        -- 按压反馈：所有快捷按钮统一执行缩放 + 暗色叠层淡入过渡动画
+        TweenService:Create(uscale, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 }):Play()
+        TweenService:Create(press, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.25 }):Play()
         moveConn = UserInputService.InputChanged:Connect(function(i)
             if not dragging then return end
             local t = i.UserInputType
@@ -832,81 +848,131 @@ addDetailRow = function(win, ctrl, kind, opts)
         local minV = opts.Min or 0
         local maxV = opts.Max or 100
         local def = opts.Default or minV
-        local track = makeGlass(row, {
-            Name = "Track",
-            Size = UDim2.new(0.5, -s(50), 0, s(6)),
-            Position = UDim2.new(0.5, 0, 0.5, -s(3)),
-            Transparency = 0.35,
-            Radius = UDim.new(0, s(3)),
-            Plain = true, NoStroke = true, NoSheen = true,
-        })
-        track.ClipsDescendants = false
-        local fill = Instance.new("Frame", track)
-        fill.Size = UDim2.new(0, 0, 1, 0)
-        fill.BackgroundColor3 = Color3.new(1, 1, 1)
-        fill.BorderSizePixel = 0
-        local fg = Instance.new("UIGradient", fill)
-        fg.Rotation = 135
-        fg.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Style.SilverTop),
-            ColorSequenceKeypoint.new(1, Style.SilverBottom),
-        })
-        local fc = Instance.new("UICorner", fill)
-        fc.CornerRadius = UDim.new(0, s(3))
-        local knob = Instance.new("Frame", track)
-        knob.Size = UDim2.fromOffset(s(12), s(12))
-        knob.Position = UDim2.new(0, -s(6), 0.5, -s(6))
-        knob.BackgroundColor3 = Style.SilverTop
-        knob.BorderSizePixel = 0
-        local kc = Instance.new("UICorner", knob)
-        kc.CornerRadius = UDim.new(1, 0)
+        local step = opts.Step or 0  -- Degree 步进吸附（0 表示无）
+
+        -- 值标签（标题沿用 row 自带左侧标题，值居于轨道左侧，轨道占右侧剩余宽度）
         local valLabel = Instance.new("TextLabel", row)
+        valLabel.Name = "SliderValue"
         valLabel.Size = UDim2.new(0, s(40), 1, 0)
-        valLabel.Position = UDim2.new(1, -s(46), 0, 0)
+        valLabel.Position = UDim2.new(0.5, -s(44), 0, 0)
         valLabel.Font = Style.Font
         valLabel.TextSize = s(11)
         valLabel.TextColor3 = Style.SubText
-        valLabel.TextXAlignment = Enum.TextXAlignment.Right
+        valLabel.TextXAlignment = Enum.TextXAlignment.Center
         valLabel.BackgroundTransparency = 1
-        local hit = Instance.new("TextButton", row)
-        hit.Size = UDim2.new(0.5, -s(50), 1, 0)
-        hit.Position = UDim2.new(0.5, 0, 0, 0)
-        hit.BackgroundTransparency = 1
-        hit.Text = ""
-        hit.AutoButtonColor = false
+        valLabel.Active = false
+        valLabel.ZIndex = 10002
+
+        local track = Instance.new("Frame", row)
+        track.Name = "SliderTrack"
+        track.Size = UDim2.new(0.5, -s(48), 0, s(6))
+        track.Position = UDim2.new(0.5, s(4), 0.5, -s(3))
+        track.BackgroundColor3 = Style.SliderTrack
+        track.BackgroundTransparency = Style.SliderTrackTransparency
+        track.BorderSizePixel = 0
+        track.ClipsDescendants = true
+        track.Active = true
+        local tc = Instance.new("UICorner", track)
+        tc.CornerRadius = UDim.new(0, s(3))
+
+        local fill = Instance.new("Frame", track)
+        fill.Name = "SliderFill"
+        fill.Size = UDim2.new(0, 0, 1, 0)
+        fill.BackgroundColor3 = Style.SliderFill
+        fill.BorderSizePixel = 0
+        fill.Active = false
+        local fc = Instance.new("UICorner", fill)
+        fc.CornerRadius = UDim.new(0, s(3))
+        local fillGrad = Instance.new("UIGradient", fill)
+        fillGrad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Style.SliderFill),
+            ColorSequenceKeypoint.new(1, darkenColor(Style.SliderFill, Style.SliderFillDarken)),
+        })
+
+        local thumb = Instance.new("Frame", track)
+        thumb.Name = "SliderThumb"
+        thumb.Size = UDim2.fromOffset(s(Style.SliderThumbSize), s(Style.SliderThumbSize))
+        thumb.BackgroundColor3 = Style.SliderThumb
+        thumb.BorderSizePixel = 0
+        thumb.Active = false
+        local thc = Instance.new("UICorner", thumb)
+        thc.CornerRadius = UDim.new(1, 0)
+
         local value = def
-        local function setValue(v, fire)
-            value = math.clamp(v, minV, maxV)
-            local f = (maxV > minV) and ((value - minV) / (maxV - minV)) or 0
-            fill.Size = UDim2.new(f, 0, 1, 0)
-            knob.Position = UDim2.new(f, -s(6), 0.5, -s(6))
-            valLabel.Text = tostring(math.floor(value + 0.5))
-            if fire and opts.Callback then pcall(opts.Callback, value) end
+        local function clampFrac(f)
+            if f < 0 then f = 0 elseif f > 1 then f = 1 end
+            return f
+        end
+        local function getRange() return maxV - minV end
+        local function snapVal(v)
+            if step and step > 0 then
+                v = minV + math.floor((v - minV) / step + 0.5) * step
+            end
+            if v < minV then v = minV end
+            if v > maxV then v = maxV end
+            return v
+        end
+        local function formatVal(v)
+            if step >= 1 then return tostring(math.floor(v + 0.5)) end
+            if step > 0 then
+                local t, dec = step, 0
+                while t < 0.999 and dec < 6 do t = t * 10; dec = dec + 1 end
+                if dec <= 0 then return tostring(math.floor(v + 0.5)) end
+                return string.format("%." .. dec .. "f", v)
+            end
+            return tostring(math.floor(v + 0.5))
+        end
+        local function refresh(animate)
+            local f = (getRange() > 0) and clampFrac((value - minV) / getRange()) or 0
+            if fill._tween then pcall(function() fill._tween:Cancel() end) end
+            if animate then
+                fill._tween = TweenService:Create(fill,
+                    TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                    { Size = UDim2.new(f, 0, 1, 0) })
+                fill._tween:Play()
+            else
+                fill.Size = UDim2.new(f, 0, 1, 0)
+            end
+            if thumb and thumb.Parent then
+                thumb.Position = UDim2.new(f, -s(Style.SliderThumbSize) / 2, 0.5, -s(Style.SliderThumbSize) / 2)
+            end
+            if valLabel and valLabel.Parent then
+                valLabel.Text = formatVal(value)
+            end
+        end
+        local function applyFrac(f, animate)
+            f = clampFrac(f)
+            value = snapVal(minV + f * getRange())
+            refresh(animate)
+            if opts.Callback then pcall(opts.Callback, value) end
             if obj and obj._configValue then obj._configCurrent = value; syncConfigValue(obj) end
         end
-        local function applyFrac(px)
-            local ax = track.AbsolutePosition.X
-            local aw = math.max(1, track.AbsoluteSize.X)
-            local f = math.clamp((px - ax) / aw, 0, 1)
-            setValue(minV + (maxV - minV) * f, true)
+        local function pointFrac(input)
+            local aw = track.AbsoluteSize.X
+            if not aw or aw <= 0 then return 0 end
+            return clampFrac((input.Position.X - track.AbsolutePosition.X) / aw)
         end
-        hit.MouseButton1Down:Connect(function()
-            local m = UserInputService:GetMouseLocation()
-            applyFrac(m.X)
-            local conn = UserInputService.InputChanged:Connect(function(i)
-                if i.UserInputType == Enum.UserInputType.MouseMovement then applyFrac(i.Position.X) end
-            end)
-            local up
-            up = UserInputService.InputEnded:Connect(function(i)
-                if i.UserInputType == Enum.UserInputType.MouseButton1 then
-                    conn:Disconnect()
-                    up:Disconnect()
-                end
-            end)
+        track.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                applyFrac(pointFrac(input), true)
+                local moveConn
+                moveConn = input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        if moveConn then pcall(function() moveConn:Disconnect() end) end
+                    elseif input.Position then
+                        applyFrac(pointFrac(input), false)
+                    end
+                end)
+            end
         end)
-        setValue(def, false)
+        refresh(false)
         local obj = { Value = def }
-        function obj:Set(v) setValue(v, false) end
+        function obj:Set(v)
+            value = snapVal(v)
+            refresh(false)
+            if opts.Callback then pcall(opts.Callback, value) end
+            if obj._configValue then obj._configCurrent = value; syncConfigValue(obj) end
+        end
         if opts.ConfigKey and opts.ConfigKey ~= "" then
             obj._configKey = opts.ConfigKey
             obj._configKind = "Slider"
@@ -1902,9 +1968,7 @@ local function collapse(win)
     win:_finishFadeIn()
     syncOrbBase(win)
     cancelAnim(win)
-    for _, item in ipairs(win._shortcuts) do
-        if item.frame and item.frame.Parent then item.frame.Visible = false end
-    end
+    -- 快捷按钮常驻：收起窗口不再隐藏快捷按钮
     local k = ORB / math.max(1, win._sizeX)
     local sizeTi = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
     win._mainPosBeforeCollapse = win._main.Position
@@ -1974,9 +2038,7 @@ local function expand(win)
     end
     task.delay(COLLAPSE_T * 0.7, function()
         if not win._collapsed and win._gui.Parent then
-            for _, item in ipairs(win._shortcuts) do
-                if item.frame and item.frame.Parent then item.frame.Visible = true end
-            end
+            -- 快捷按钮常驻：展开窗口不再重新显示快捷按钮（始终可见）
         end
     end)
     task.delay(COLLAPSE_T + 0.02, function()
