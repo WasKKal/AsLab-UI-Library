@@ -317,7 +317,7 @@ local function makeBox(parent, w, text)
     stroke.Color = Style.BlockStroke
     stroke.Transparency = Style.BlockStrokeTransparency
     stroke.Thickness = 1
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
     local label = Instance.new("TextLabel", box)
     label.Size = UDim2.fromScale(1, 1)
     label.Text = text
@@ -357,8 +357,11 @@ end
 local function makeRow(parent, index, title)
     local row = makeGlass(parent, {
         Name = "Row",
-        Size = UDim2.new(1, 0, 0, ROW_H),
-        Position = UDim2.new(0, 0, 0, DETAIL_TOP + index * (ROW_H + ROW_GAP)),
+        -- 左右各留 2px 安全边距：真机中 UIStroke / 圆角 / 像素舍入会向外扩约 1px，
+        -- 若行控件严格贴满容器（旧写法 Scale=1, offset=0），两端会被祖先
+        -- ClipsDescendants 与 ScrollingFrame 滚动条占位裁掉「微微一条」。
+        Size = UDim2.new(1, -s(4), 0, ROW_H),
+        Position = UDim2.new(0, s(2), 0, DETAIL_TOP + index * (ROW_H + ROW_GAP)),
         Transparency = 0.5,
         Radius = UDim.new(0, s(9)),
         Plain = true,
@@ -370,7 +373,7 @@ local function makeRow(parent, index, title)
     stroke.Color = Style.BlockStroke
     stroke.Transparency = Style.BlockStrokeTransparency
     stroke.Thickness = 1
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
     local label = Instance.new("TextLabel", row)
     label.Size = UDim2.new(0.5, -s(10), 1, 0)
     label.Position = UDim2.new(0, s(10), 0, 0)
@@ -409,7 +412,11 @@ local function updateCanvas(win)
     end
     local w = math.max(1, math.ceil(win._controlW or 0))
     local h = math.max(1, math.ceil(need))
-    sc.CanvasSize = UDim2.fromOffset(0, h)
+    -- 真机 ScrollingFrame 中，子对象的 UDim2.Scale 相对 AbsoluteCanvasSize 解析，
+    -- 且垂直滚动条会占右侧 ScrollBarThickness。旧写法把 CanvasSize.X 留成 0，
+    -- 部分执行器会把水平基准解析为 0 / 或按窗口宽度裁掉贴边子控件的左右几像素，
+    -- 表现为「子选项控件左右边缘被微微裁剪」。这里显式把 canvas 宽度设为控件区宽度。
+    sc.CanvasSize = UDim2.fromOffset(w, h)
     local innerW = math.max(1, w - PAD_IN * 2)
     local innerH = math.max(1, h - PAD_IN * 2)
     for _, t in ipairs(win._tabs) do
@@ -655,7 +662,7 @@ createShortcut = function(win, ctrl)
     stroke.Color = Style.BlockStroke
     stroke.Transparency = Style.BlockStrokeTransparency
     stroke.Thickness = 1
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 
     local silver = Instance.new("Frame", sc)
     silver.Name = "Silver"
@@ -872,7 +879,10 @@ addDetailRow = function(win, ctrl, kind, opts)
         track.BackgroundColor3 = Style.SliderTrack
         track.BackgroundTransparency = Style.SliderTrackTransparency
         track.BorderSizePixel = 0
-        track.ClipsDescendants = true
+        -- 不能裁剪：圆形拖块（s(16)）高于轨道（s(6)），真机里 ClipsDescendants
+        -- 会把拖块上下各切掉约 4px，只剩一条横条。fill 自带 UICorner 且宽度
+        -- 恒 <= 轨道宽度，关闭裁剪后仍不会溢出，圆角由自身 UICorner 保证。
+        track.ClipsDescendants = false
         track.Active = true
         local tc = Instance.new("UICorner", track)
         tc.CornerRadius = UDim.new(0, s(3))
@@ -1497,7 +1507,7 @@ local function addControl(tab, kind, opts)
     borderStroke.Color = Style.BlockStroke
     borderStroke.Transparency = Style.BlockStrokeTransparency
     borderStroke.Thickness = Style.BlockStrokeThickness
-    borderStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    borderStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 
     if kind == "Toggle" then refreshToggle(ctrl, false) end
 
@@ -2666,7 +2676,7 @@ function Library:AddTab(name, icon)
     selStroke.Color = Cfg.TabSelStroke
     selStroke.Thickness = Cfg.TabSelStrokeThickness
     selStroke.Transparency = 1
-    selStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    selStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
     selStroke:SetAttribute("_skipFade", true)
     -- 选中块不再用亮银渐变（真机发灰时会让白字/图标与背景糊在一起），
     -- 改用与高亮块同色系的低对比渐变，保证文字与图标始终清晰。
