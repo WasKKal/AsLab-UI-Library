@@ -983,11 +983,14 @@ setGroupTransparency = function(container, t, force)
     local nodes = { container }
     local function collect(node)
         for _, ch in ipairs(node:GetChildren()) do
-            if ch:IsA("GuiObject") then
-                nodes[#nodes + 1] = ch
-                collect(ch)
-            else
-                collect(ch)
+            local nm = ch.Name
+            if nm ~= "ClickFx" and nm ~= "Ripple" then
+                if ch:IsA("GuiObject") then
+                    nodes[#nodes + 1] = ch
+                    collect(ch)
+                else
+                    collect(ch)
+                end
             end
         end
     end
@@ -1114,6 +1117,125 @@ local function refreshToggle(ctrl, animate)
     setNominal(ctrl._silver, "bg", bgT)
     if ctrl._icon then tw(ctrl._icon, "ImageColor3", fg) end
     if ctrl._title then tw(ctrl._title, "TextColor3", fg) end
+end
+
+local function ensureFxLayer(btn, tint, radius)
+    if not (btn and btn.Parent) then return nil end
+    local ov = btn:FindFirstChild("ClickFx")
+    if ov then return ov end
+    local top = btn.ZIndex or 1
+    for _, ch in ipairs(btn:GetChildren()) do
+        if ch:IsA("GuiObject") and (ch.ZIndex or 1) > top then top = ch.ZIndex end
+    end
+    ov = Instance.new("Frame")
+    ov.Name = "ClickFx"
+    ov.Size = UDim2.fromScale(1, 1)
+    ov.BackgroundColor3 = tint or Color3.new(1, 1, 1)
+    ov.BackgroundTransparency = 1
+    ov.BorderSizePixel = 0
+    ov.Active = false
+    ov.ClipsDescendants = true
+    ov.ZIndex = top + 1
+    ov:SetAttribute("_skipFade", true)
+    local oc = Instance.new("UICorner")
+    oc.CornerRadius = radius or UDim.new(0, s(8))
+    oc.Parent = ov
+    ov.Parent = btn
+    return ov
+end
+
+local function clickRipple(btn, tint, radius)
+    if not (btn and btn.Parent) then return end
+    local ov = ensureFxLayer(btn, tint, radius)
+    if not (ov and ov.Parent) then return end
+    local w, h = btn.AbsoluteSize.X, btn.AbsoluteSize.Y
+    if not w or w <= 0 then w = 40 end
+    if not h or h <= 0 then h = 24 end
+    local d = math.max(w, h) * 2.4
+    local r = Instance.new("Frame")
+    r.Name = "Ripple"
+    r.AnchorPoint = Vector2.new(0.5, 0.5)
+    r.Position = UDim2.fromScale(0.5, 0.5)
+    r.Size = UDim2.fromOffset(8, 8)
+    r.BackgroundColor3 = tint or Color3.new(1, 1, 1)
+    r.BackgroundTransparency = 0.62
+    r.BorderSizePixel = 0
+    r.ZIndex = ov.ZIndex
+    r:SetAttribute("_skipFade", true)
+    local rc = Instance.new("UICorner")
+    rc.CornerRadius = UDim.new(1, 0)
+    rc.Parent = r
+    r.Parent = ov
+    local tw = TweenService:Create(r, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Size = UDim2.fromOffset(d, d),
+        BackgroundTransparency = 1,
+    })
+    tw:Play()
+    task.delay(0.5, function()
+        if r and r.Parent then r:Destroy() end
+    end)
+end
+
+local function attachClickFx(btn, opts)
+    if not (btn and btn.Parent) then return end
+    local marked = false
+    pcall(function() marked = btn:GetAttribute("_clickFx") == true end)
+    if marked then return end
+    pcall(function() btn:SetAttribute("_clickFx", true) end)
+    opts = opts or {}
+    local tint = opts.tint or Color3.new(1, 1, 1)
+    local peak = opts.peak or 0.82
+    local radius = opts.radius or UDim.new(0, s(8))
+    local ov = ensureFxLayer(btn, tint, radius)
+
+    local sc = btn:FindFirstChildOfClass("UIScale")
+    if not sc then
+        sc = Instance.new("UIScale")
+        sc.Parent = btn
+    end
+    local baseScale = sc.Scale or 1
+    if baseScale <= 0 then baseScale = 1 end
+    local downT, upT, scT
+
+    local function dismiss(tw)
+        if tw then pcall(function() tw:Cancel() end) end
+        return nil
+    end
+
+    local function pressDown()
+        downT = dismiss(downT)
+        upT = dismiss(upT)
+        downT = TweenService:Create(ov, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundTransparency = peak,
+        })
+        downT:Play()
+        scT = dismiss(scT)
+        scT = TweenService:Create(sc, TweenInfo.new(0.1, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+            Scale = baseScale * 0.96,
+        })
+        scT:Play()
+    end
+
+    local function pressUp(clicked)
+        downT = dismiss(downT)
+        upT = dismiss(upT)
+        upT = TweenService:Create(ov, TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundTransparency = 1,
+        })
+        upT:Play()
+        scT = dismiss(scT)
+        scT = TweenService:Create(sc, TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Scale = baseScale,
+        })
+        scT:Play()
+        if clicked then clickRipple(btn, tint, radius) end
+    end
+
+    btn.MouseButton1Down:Connect(pressDown)
+    btn.MouseButton1Up:Connect(function() pressUp(false) end)
+    btn.MouseButton1Click:Connect(function() pressUp(true) end)
+    btn._clickFx = ov
+    return ov
 end
 
 local function stopPressTweens(ctrl)
@@ -1358,7 +1480,10 @@ createShortcut = function(win, ctrl)
                 pressTween:Play()
             end)
         end
-        if fire and not moved then fireClick(ctrl) end
+        if fire and not moved then
+            clickRipple(hit, Color3.new(1, 1, 1), UDim.new(0, s(10)))
+            fireClick(ctrl)
+        end
         if moved and not win._loadingConfig then pcall(function() win:SaveConfig() end) end
     end
     local dragStartInput = nil
@@ -1708,6 +1833,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         end
         i18nDynamic(win, refresh)
         hit.MouseButton1Click:Connect(function()
+            clickRipple(hit, Color3.new(1, 1, 1), UDim.new(0, s(9)))
             st = not st
             refresh()
             if opts.Callback then pcall(opts.Callback, st) end
@@ -1751,6 +1877,7 @@ addDetailRow = function(win, ctrl, kind, opts)
             TweenService:Create(press, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
         end)
         hit.MouseButton1Click:Connect(function()
+            clickRipple(hit, Color3.new(1, 1, 1), UDim.new(0, s(8)))
             if opts.Callback then pcall(opts.Callback) end
         end)
         local obj = {}
@@ -3137,6 +3264,7 @@ function Library.CreateWindow(opts)
             b.TextSize = s(13)
             b.TextColor3 = Style.Text
         end
+        attachClickFx(b, { tint = Color3.new(1, 1, 1), peak = 0.7, radius = UDim.new(1, 0) })
         return b
     end
     local fbtnX = s(2)
@@ -3217,6 +3345,7 @@ function Library.CreateWindow(opts)
     orbHit.Text = ""
     orbHit.AutoButtonColor = false
     orbHit.ZIndex = ZBASE + 52
+    attachClickFx(orbHit, { tint = Color3.new(1, 1, 1), peak = 0.72, radius = UDim.new(1, 0) })
 
     local orbExt = Instance.new("NumberValue", gui)
     orbExt.Name = "OrbExt"
@@ -3391,6 +3520,7 @@ function Library.CreateWindow(opts)
         xBtn.Font = Style.Font
         xBtn.TextSize = s(14)
     end
+    attachClickFx(xBtn, { tint = Color3.new(1, 1, 1), peak = 0.7, radius = UDim.new(1, 0) })
 
     local sizeLbl = Instance.new("TextLabel", panel)
     sizeLbl.Name = "SizeLabel"
@@ -3463,6 +3593,7 @@ function Library.CreateWindow(opts)
     applyBtn.TextColor3 = Style.ActiveText
     applyBtn.AutoButtonColor = false
     applyBtn.ZIndex = SET_Z + 3
+    attachClickFx(applyBtn, { tint = Color3.new(0, 0, 0), peak = 0.7, radius = UDim.new(0, s(9)) })
     local abg = silverGradient(applyBtn)
     local abCorner = Instance.new("UICorner", applyBtn)
     abCorner.CornerRadius = UDim.new(0, s(9))
@@ -3706,6 +3837,7 @@ function Library.CreateWindow(opts)
     confirmBtnLbl.TextYAlignment = Enum.TextYAlignment.Center
     confirmBtnLbl.ZIndex = ZBASE + 56
     i18nText(win, confirmBtnLbl, "Confirm")
+    attachClickFx(confirmBtn, { tint = Color3.new(0, 0, 0), peak = 0.7, radius = UDim.new(0, s(9)) })
 
     local cancelBtn = Instance.new("TextButton", confirmPanel)
     cancelBtn.Name = "CancelClose"
@@ -3728,6 +3860,7 @@ function Library.CreateWindow(opts)
     cancelBtnLbl.TextXAlignment = Enum.TextXAlignment.Center
     cancelBtnLbl.TextYAlignment = Enum.TextYAlignment.Center
     cancelBtnLbl.ZIndex = ZBASE + 56
+    attachClickFx(cancelBtn, { tint = Color3.new(1, 1, 1), peak = 0.7, radius = UDim.new(0, s(9)) })
     i18nText(win, cancelBtnLbl, "Cancel")
 
     local confirmGen = 0
@@ -4256,6 +4389,7 @@ function Library:AddTab(name, icon)
     function tab:AddToggle(o) return addControl(tab, "Toggle", o) end
     function tab:AddButton(o) return addControl(tab, "Button", o) end
 
+    attachClickFx(row, { tint = Color3.new(1, 1, 1), peak = 0.68, radius = UDim.new(0, s(7)) })
     row.MouseButton1Click:Connect(function() selectTab(self, idx) end)
 
     table.insert(self._tabs, tab)
