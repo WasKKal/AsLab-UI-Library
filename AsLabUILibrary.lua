@@ -1433,7 +1433,6 @@ local function attachClickFx(btn, opts)
     btn.MouseButton1Down:Connect(pressDown)
     btn.MouseButton1Up:Connect(function() pressUp(false) end)
     btn.MouseButton1Click:Connect(function() pressUp(true) end)
-    btn._clickFx = ov
     return ov
 end
 
