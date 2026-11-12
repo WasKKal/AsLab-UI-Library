@@ -3124,16 +3124,18 @@ function Library.CreateWindow(opts)
     preview.AnchorPoint = Vector2.new(0.5, 0.5)
     preview.Size = UDim2.fromOffset(win._sizeX, win._sizeY)
     preview.Position = UDim2.fromOffset(main.Position.X.Offset + win._sizeX / 2, main.Position.Y.Offset + win._sizeY / 2)
+    local PREVIEW_FILL = 0.9
     preview.BackgroundColor3 = Color3.fromRGB(70, 145, 255)
-    preview.BackgroundTransparency = 0.82
+    preview.BackgroundTransparency = PREVIEW_FILL
     preview.BorderSizePixel = 0
     preview.Visible = false
     preview.ZIndex = ZBASE + 50
     local pvCorner = Instance.new("UICorner", preview)
     pvCorner.CornerRadius = UDim.new(0, s(24))
     local pvStroke = Instance.new("UIStroke", preview)
-    pvStroke.Color = Color3.fromRGB(96, 165, 255)
+    pvStroke.Color = Color3.fromRGB(120, 180, 255)
     pvStroke.Thickness = 2
+    pvStroke.Transparency = 0
     pvStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 
     local pW, pH = s(320), s(244)
@@ -3281,8 +3283,21 @@ function Library.CreateWindow(opts)
     end
 
     local previewTweens = {}
-    local function tweenPreview(nw, nh, cx, cy)
+    local function restorePreviewAlpha()
+        preview.BackgroundTransparency = PREVIEW_FILL
+        if pvStroke then pvStroke.Transparency = 0 end
+    end
+    local function showPreview()
+        pcall(function() setGroupTransparency(preview, 0, true) end)
+        restorePreviewAlpha()
         preview.Visible = true
+    end
+    local function hidePreview()
+        preview.Visible = false
+        restorePreviewAlpha()
+    end
+    local function tweenPreview(nw, nh, cx, cy)
+        showPreview()
         local ti = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         for _, tw in ipairs(previewTweens) do pcall(function() tw:Cancel() end) end
         previewTweens = {}
@@ -3294,7 +3309,7 @@ function Library.CreateWindow(opts)
     end
 
     local function updatePreview(k)
-        if not (win._settingsOpen and k) then preview.Visible = false return end
+        if not (win._settingsOpen and k) then hidePreview() return end
         local nw, nh = win._sizeX * k, win._sizeY * k
         local curW, curH = win._sizeX * (win._uiScale or 1), win._sizeY * (win._uiScale or 1)
         local vw, vh = viewport()
@@ -3340,14 +3355,14 @@ function Library.CreateWindow(opts)
         local gen = settingsGen
         if langDropdown and langDropdown._closeMenu then pcall(langDropdown._closeMenu) end
         if instant then
-            preview.Visible = false
+            hidePreview()
             overlay.Visible = false
             panel.Visible = false
             return
         end
         local ti = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         tweenGroup(preview, 1, ti, function()
-            if settingsGen == gen and not win._settingsOpen then preview.Visible = false end
+            if settingsGen == gen and not win._settingsOpen then hidePreview() end
         end, true)
         tweenGroup(overlay, 1, ti, function()
             if settingsGen == gen and not win._settingsOpen then overlay.Visible = false end
@@ -3368,7 +3383,7 @@ function Library.CreateWindow(opts)
         langDropdown:Set(settingsLanguage)
         overlay.Visible = true
         panel.Visible = true
-        preview.Visible = false
+        hidePreview()
         setGroupTransparency(overlay, 1, true)
         setGroupTransparency(panel, 1, true)
         local ti = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
