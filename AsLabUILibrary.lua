@@ -455,30 +455,40 @@ local function setGroupTransparency(container, t)
     end
     collect(container)
     for _, node in ipairs(nodes) do
-        if pcall(function() return node.BackgroundTransparency end) then
-            local cur = node.BackgroundTransparency
-            local b = base[node]
-            if not b then b = {}; base[node] = b end
-            if b.bg == nil then b.bg = cur end
-            node.BackgroundTransparency = 1 - (1 - b.bg) * mult
-        end
-        if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
-            local b = base[node]; if not b then b = {}; base[node] = b end
-            local cur = node.TextTransparency
-            if b.tt == nil then b.tt = cur end
-            node.TextTransparency = 1 - (1 - b.tt) * mult
-            local cs = node.TextStrokeTransparency
-            if b.ts == nil then b.ts = cs end
-            node.TextStrokeTransparency = 1 - (1 - b.ts) * mult
-        end
-        if node:IsA("ImageLabel") or node:IsA("ImageButton") or node:IsA("VideoFrame") then
-            local b = base[node]; if not b then b = {}; base[node] = b end
-            local cur = node.ImageTransparency
-            if b.it == nil then b.it = cur end
-            node.ImageTransparency = 1 - (1 - b.it) * mult
+        -- _skipFade：按压叠层 / 选中块 / 冲突提示 / 悬浮球信息等动态覆盖层
+        -- 不参与 GroupTransparency 快照。否则 openDetail 淡出时会把「正在过渡中的
+        -- 按压透明度(0.18)」记成常态基准，closeDetail 淡入又恢复成该值 ——
+        -- 返回主页面后控件被永久固化成按压变暗态。
+        local skip = false
+        pcall(function() skip = (node:GetAttribute("_skipFade") == true) end)
+        if not skip then
+            if pcall(function() return node.BackgroundTransparency end) then
+                local cur = node.BackgroundTransparency
+                local b = base[node]
+                if not b then b = {}; base[node] = b end
+                if b.bg == nil then b.bg = cur end
+                node.BackgroundTransparency = 1 - (1 - b.bg) * mult
+            end
+            if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
+                local b = base[node]; if not b then b = {}; base[node] = b end
+                local cur = node.TextTransparency
+                if b.tt == nil then b.tt = cur end
+                node.TextTransparency = 1 - (1 - b.tt) * mult
+                local cs = node.TextStrokeTransparency
+                if b.ts == nil then b.ts = cs end
+                node.TextStrokeTransparency = 1 - (1 - b.ts) * mult
+            end
+            if node:IsA("ImageLabel") or node:IsA("ImageButton") or node:IsA("VideoFrame") then
+                local b = base[node]; if not b then b = {}; base[node] = b end
+                local cur = node.ImageTransparency
+                if b.it == nil then b.it = cur end
+                node.ImageTransparency = 1 - (1 - b.it) * mult
+            end
         end
         for _, ch in ipairs(node:GetChildren()) do
-            if ch:IsA("UIStroke") then
+            local chSkip = false
+            pcall(function() chSkip = (ch:GetAttribute("_skipFade") == true) end)
+            if ch:IsA("UIStroke") and not chSkip then
                 local b = base[ch]; if not b then b = {}; base[ch] = b end
                 local cur = ch.Transparency
                 if b.st == nil then b.st = cur end
@@ -547,13 +557,43 @@ local function refreshToggle(ctrl, animate)
     if ctrl._title then tw(ctrl._title, "TextColor3", fg) end
 end
 
+local function stopPressTweens(ctrl)
+    for _, key in ipairs({ "_scaleTween", "_pressTween" }) do
+        local tw = ctrl[key]
+        if tw then pcall(function() tw:Cancel() end) ctrl[key] = nil end
+    end
+end
+
 local function setPressed(ctrl, on)
     if not (ctrl._scale and ctrl._scale.Parent) then return end
+    stopPressTweens(ctrl)
     local ti = TweenInfo.new(on and 0.12 or 0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-    TweenService:Create(ctrl._scale, ti, { Scale = on and 0.9 or 1 }):Play()
-    TweenService:Create(ctrl._press, TweenInfo.new(0.15), {
+    ctrl._scaleTween = TweenService:Create(ctrl._scale, ti, { Scale = on and 0.9 or 1 })
+    ctrl._scaleTween:Play()
+    ctrl._pressTween = TweenService:Create(ctrl._press, TweenInfo.new(0.15), {
         BackgroundTransparency = on and 0.18 or 1,
-    }):Play()
+    })
+    ctrl._pressTween:Play()
+end
+
+-- 立即、无动画地复位按压态。进入/退出子选项页时必须调用：
+--  · Cancel 正在运行的 Tween，否则 Tween 会在后续帧把属性写回；
+--  · 不把「过渡中的 0.18」留给 GroupTransparency 当常态基准。
+-- 真机上 MouseButton1Up / MouseLeave 在页面切换时可能丢失，需显式兜底。
+local function releasePress(ctrl)
+    if not ctrl then return end
+    ctrl._pressed = false
+    ctrl._held = false
+    ctrl._holdGen = (ctrl._holdGen or 0) + 1
+    stopPressTweens(ctrl)
+    if ctrl._press and ctrl._press.Parent then ctrl._press.BackgroundTransparency = 1 end
+    if ctrl._scale and ctrl._scale.Parent then ctrl._scale.Scale = 1 end
+end
+
+local function releaseAllPress(win)
+    for _, t in ipairs(win._tabs or {}) do
+        for _, c in ipairs(t._controls or {}) do releasePress(c) end
+    end
 end
 
 local function syncShortcut(ctrl)
@@ -1300,6 +1340,11 @@ end
 
 openDetail = function(win, ctrl)
     if win._detail then return end
+    -- 长按进入子选项前，立即复位所有控件的按压态：
+    -- 此时 setPressed(false) 的 0.28s 过渡 Tween 仍在跑，press 叠层约 0.18，
+    -- 若直接 fadeGroup(cont,1)，会把这个中间值记进 GroupTransparency 常态快照，
+    -- 返回主页面后控件永久变暗。必须在任何淡出快照之前硬性释放。
+    releaseAllPress(win)
     for _, p in ipairs(win._colorPanels or {}) do p.Visible = false end
     if win._listening then
         win._listening.label.Text = KEY_PLACEHOLDER
@@ -1330,6 +1375,9 @@ closeDetail = function(win)
     local ctrl = win._detail
     if not ctrl then return end
     win._detail = nil
+    -- 返回主页面前再次兜底：真机 MouseButton1Up / MouseLeave 在页面切换时可能丢失，
+    -- 且 setGroupTransparency(cont,1) 会做一次全量快照，须确保此刻按压态已干净。
+    releaseAllPress(win)
     if win._listening then
         win._listening.label.Text = KEY_PLACEHOLDER
         win._listening.ctrl._keybind = nil
