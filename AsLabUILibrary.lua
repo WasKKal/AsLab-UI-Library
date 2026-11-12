@@ -409,6 +409,7 @@ local function makeBox(parent, w, text)
     label.BackgroundTransparency = 1
     label.Active = false
     label.ZIndex = ZBASE + 2
+    label:SetAttribute("_skipFade", true)
     local hit = Instance.new("TextButton", box)
     hit.Size = UDim2.fromScale(1, 1)
     hit.BackgroundTransparency = 1
@@ -462,6 +463,7 @@ local function makeRow(parent, index, title)
     label.TextYAlignment = Enum.TextYAlignment.Center
     label.BackgroundTransparency = 1
     label.Active = false
+    label:SetAttribute("_skipFade", true)
     return row
 end
 
@@ -667,6 +669,20 @@ end
 local function releaseAllPress(win)
     for _, t in ipairs(win._tabs or {}) do
         for _, c in ipairs(t._controls or {}) do releasePress(c) end
+    end
+    local sc = win._scroller
+    if sc then
+        local function walk(node)
+            for _, ch in ipairs(node:GetChildren()) do
+                if ch:IsA("Frame") and ch.Name == "Press" then
+                    pcall(function() ch.BackgroundTransparency = 1 end)
+                elseif ch:IsA("UIScale") then
+                    pcall(function() ch.Scale = 1 end)
+                end
+                walk(ch)
+            end
+        end
+        walk(sc)
     end
 end
 
@@ -1136,6 +1152,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         silver.BackgroundTransparency = 1
         silver.BorderSizePixel = 0
         silver.Active = false
+        silver:SetAttribute("_skipFade", true)
         local sc = Instance.new("UICorner", silver)
         sc.CornerRadius = UDim.new(0, s(7))
         local sg = Instance.new("UIGradient", silver)
@@ -1177,6 +1194,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         press.BackgroundTransparency = 1
         press.BorderSizePixel = 0
         press.Active = false
+        press:SetAttribute("_skipFade", true)
         hit.MouseButton1Down:Connect(function()
             TweenService:Create(press, TweenInfo.new(0.1), { BackgroundTransparency = 0.25 }):Play()
         end)
@@ -2642,10 +2660,13 @@ function Library.CreateWindow(opts)
         orbMoved = false
         orbStartX, orbStartY = inputPoint(input)
         orbOriginX, orbOriginY = win._orbBaseX, win._orbBaseY
-        if win._orbExtTween then pcall(function() win._orbExtTween:Cancel() end) win._orbExtTween = nil end
+        local capsuleLive = win._capsuleActive and win._capsuleCurrent ~= nil
         if win._orbBlendTween then pcall(function() win._orbBlendTween:Cancel() end) win._orbBlendTween = nil end
-        win._orbExt.Value = 0
-        win._orbBlend.Value = (win._orbSide == "left") and 0 or 1
+        if not capsuleLive then
+            if win._orbExtTween then pcall(function() win._orbExtTween:Cancel() end) win._orbExtTween = nil end
+            win._orbExt.Value = 0
+            win._orbBlend.Value = (win._orbSide == "left") and 0 or 1
+        end
         applyOrbLayout(win)
         orbMoveConn = UserInputService.InputChanged:Connect(function(i)
             if not orbDragging then return end
