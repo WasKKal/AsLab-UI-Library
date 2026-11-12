@@ -12,6 +12,51 @@ local fadeGroup, setGroupTransparency, tweenGroup, showColorPanel
 local SCALE = 0.85
 local function s(n) return n * SCALE end
 
+-- HSV 换算：不依赖 Color3:ToHSV / Color3.fromHSV，兼容性更好
+local function colorToHSV(c)
+    local r, g, b = c.R, c.G, c.B
+    local mx = math.max(r, g, b)
+    local mn = math.min(r, g, b)
+    local d = mx - mn
+    local h = 0
+    if d > 1e-6 then
+        if mx == r then h = ((g - b) / d) % 6
+        elseif mx == g then h = (b - r) / d + 2
+        else h = (r - g) / d + 4 end
+        h = h / 6
+    end
+    local sat = (mx <= 0) and 0 or (d / mx)
+    return h, sat, mx
+end
+
+local function hsvToColor(h, sat, val)
+    h = (h or 0) % 1
+    sat = math.clamp(sat or 0, 0, 1)
+    val = math.clamp(val or 0, 0, 1)
+    local i = math.floor(h * 6)
+    local f = h * 6 - i
+    local p = val * (1 - sat)
+    local q = val * (1 - f * sat)
+    local t = val * (1 - (1 - f) * sat)
+    local r, g, b
+    local m = i % 6
+    if m == 0 then r, g, b = val, t, p
+    elseif m == 1 then r, g, b = q, val, p
+    elseif m == 2 then r, g, b = p, val, t
+    elseif m == 3 then r, g, b = p, q, val
+    elseif m == 4 then r, g, b = t, p, val
+    else r, g, b = val, p, q end
+    return Color3.new(r, g, b)
+end
+
+-- 颜色判断：不只看 typeof（部分执行器/代理对象的 typeof 不可靠），同时做结构判断
+local function isColor3(c)
+    if c == nil then return false end
+    if typeof(c) == "Color3" then return true end
+    local ok, r, g, b = pcall(function() return c.R, c.G, c.B end)
+    return ok and r ~= nil and g ~= nil and b ~= nil
+end
+
 local ZBASE = 110000
 
 local Style = {
@@ -253,7 +298,12 @@ local HolderSource = "none"
 local function getHolder()
     local function attempt(fn)
         local ok, h = pcall(fn)
-        if ok and h and typeof(h) == "Instance" then return h end
+        if not ok or h == nil then return nil end
+        -- 兼容：部分执行器的容器代理对象 typeof 不返回 "Instance"，只要是可挂载的容器就接受
+        local t = typeof(h)
+        if t == "Instance" or type(h) == "table" or type(h) == "userdata" then
+            return h
+        end
         return nil
     end
     local h = attempt(function()
@@ -329,7 +379,7 @@ do
 end
 
 local function cfgToJSON(v)
-    if typeof(v) == "Color3" then
+    if isColor3(v) then
         return { __aslab_color3 = { r = v.R, g = v.G, b = v.B } }
     end
     return v
@@ -1027,11 +1077,16 @@ slotY = function(win, h)
 end
 
 local function screenWidth(win)
-    local sw = 1920
+    local sw = 0
     pcall(function()
         local a = win._gui.AbsoluteSize.X
         if a and a > 0 then sw = a end
     end)
+    if sw <= 0 then
+        -- ScreenGui 尚未完成布局时回退到相机视口，避免靠右的快捷键落到屏幕外
+        pcall(function() sw = workspace.CurrentCamera.ViewportSize.X end)
+    end
+    if not sw or sw <= 0 then sw = 1280 end
     return sw
 end
 
@@ -1559,8 +1614,8 @@ addDetailRow = function(win, ctrl, kind, opts)
         lstroke.Thickness = 1
 
         local def = Color3.fromRGB(255, 96, 96)
-        if typeof(opts.Default) == "Color3" then def = opts.Default end
-        local h, sat, val = def:ToHSV()
+        if isColor3(opts.Default) then def = opts.Default end
+        local h, sat, val = colorToHSV(def)
 
         local pw, ph = s(210), s(158)
         local panel = makeGlass(layer, {
@@ -1588,7 +1643,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         sv.Name = "SV"
         sv.Size = UDim2.fromOffset(svW, svH)
         sv.Position = UDim2.fromOffset(pad, pad)
-        sv.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+        sv.BackgroundColor3 = hsvToColor(h, 1, 1)
         sv.BorderSizePixel = 0
         sv.ClipsDescendants = true
         local svc = Instance.new("UICorner", sv)
@@ -1686,13 +1741,13 @@ addDetailRow = function(win, ctrl, kind, opts)
         end
         local obj
         local function refresh(fire)
-            local c = Color3.fromHSV(h, sat, val)
+            local c = hsvToColor(h, sat, val)
             local hex = toHex(c)
             swatch.BackgroundColor3 = c
             prev.BackgroundColor3 = c
             label.Text = hex
             hexLabel.Text = hex
-            sv.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+            sv.BackgroundColor3 = hsvToColor(h, 1, 1)
             cursor.Position = UDim2.new(sat, -s(5), 1 - val, -s(5))
             hcur.Position = UDim2.new(h, -s(2), 0.5, -s(8))
             if fire and opts.Callback then pcall(opts.Callback, c) end
@@ -1769,8 +1824,8 @@ addDetailRow = function(win, ctrl, kind, opts)
         refresh(false)
         obj = { Value = def }
         function obj:Set(c)
-            if typeof(c) == "Color3" then
-                h, sat, val = c:ToHSV()
+            if isColor3(c) then
+                h, sat, val = colorToHSV(c)
                 obj.Value = c
                 refresh(false)
                 if obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
@@ -1778,7 +1833,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         end
         -- 允许通过 SetValue 更改取色器内容
         obj.SetValue = obj.Set
-        function obj:Get() return Color3.fromHSV(h, sat, val) end
+        function obj:Get() return hsvToColor(h, sat, val) end
         if opts.ConfigKey and opts.ConfigKey ~= "" then
             obj._configKey = opts.ConfigKey
             obj._configKind = "ColorPicker"
@@ -3747,7 +3802,9 @@ function Library:_fadeIn()
     self._fadeGroupTween = tweenGroup(main, 0,
         TweenInfo.new(0.42, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), nil, true)
 
-    task.delay(0.62, function()
+    -- 收尾：用缩放缓动的 Completed 作为结束信号（按真实播放时长，不受调度抖动影响），
+    -- 另加 1.2s 兜底，避免 Completed 因取消/异常未触发导致窗口停在小比例或半透明状态。
+    local finalize = function()
         if self._fadeGen ~= gen then return end
         self._entranceActive = false
         if scale and scale.Parent then scale.Scale = self._uiScale or 1 end
@@ -3760,6 +3817,24 @@ function Library:_fadeIn()
         if self._activeTab and self._activeTab > 0 and type(selectTab) == "function" then
             pcall(selectTab, self, self._activeTab)
         end
+    end
+
+    local conn
+    local okConn = pcall(function()
+        conn = twScale.Completed:Connect(function()
+            if conn then pcall(function() conn:Disconnect() end) conn = nil end
+            finalize()
+        end)
+    end)
+    if not okConn then conn = nil end
+    self._fadeDoneConn = conn
+
+    task.delay(1.2, function()
+        if conn then
+            pcall(function() conn:Disconnect() end)
+            conn = nil
+        end
+        finalize()
     end)
 end
 
