@@ -9,6 +9,12 @@ Library.__index = Library
 local SCALE = 0.85
 local function s(n) return n * SCALE end
 
+-- 统一层级基值：历史显式 ZIndex 基数为 10000，本轮按要求再统一 +100000
+-- → 110000。ZIndex 只在同一个 ScreenGui 内排序，跨 GUI 的层级靠 DisplayOrder；
+-- 这里保留窗口内部原有的相对顺序（背景 0 < 默认 1 < 显式 110001..110060），
+-- 避免把垫底的背景抬到内容之上（那样会整片盖住标题/选项卡/控件）。
+local ZBASE = 110000
+
 local Style = {
     Glass = Color3.fromRGB(28, 28, 34),
     GlassTop = Color3.fromRGB(46, 46, 54),
@@ -180,19 +186,50 @@ function Library.PreloadLucide()
     return loadLucide() ~= nil
 end
 
+-- holder 必须优先使用执行器提供的隐藏 GUI 容器 gethui()：
+-- 挂在它下面的 ScreenGui 不会被游戏自带 UI 覆盖，也不会随角色重生被清掉，
+-- 且 ZIndex/DisplayOrder 抬到 ZBASE 后才能真正压住外部 UI。
+-- 只有在确实没有 gethui()（Studio / 普通 Roblox）时才回退 CoreGui / PlayerGui。
+local HolderSource = "none"
 local function getHolder()
-    local ok, h = pcall(function() return gethui() end)
-    if ok and h then return h end
-    ok, h = pcall(function() return game:GetService("CoreGui") end)
-    if ok and h then return h end
-    local ok2, pg = pcall(function() return Players.LocalPlayer:WaitForChild("PlayerGui", 5) end)
-    if ok2 and pg then return pg end
+    local function attempt(fn)
+        local ok, h = pcall(fn)
+        if ok and h and typeof(h) == "Instance" then return h end
+        return nil
+    end
+    local h = attempt(function()
+        if type(gethui) == "function" then return gethui() end
+    end)
+    if h then HolderSource = "gethui" return h end
+    -- 少数执行器把同一容器暴露为 get_hidden_gui
+    h = attempt(function()
+        if type(get_hidden_gui) == "function" then return get_hidden_gui() end
+    end)
+    if h then HolderSource = "get_hidden_gui" return h end
+    h = attempt(function() return game:GetService("CoreGui") end)
+    if h then HolderSource = "CoreGui" return h end
+    h = attempt(function() return Players.LocalPlayer:WaitForChild("PlayerGui", 5) end)
+    if h then HolderSource = "PlayerGui" return h end
     return nil
+end
+function Library.GetHolderSource() return HolderSource end
+
+-- 统一的指针坐标源：真机 / 执行器里 InputObject.Position 才是本次输入的真实
+-- 屏幕坐标；GetMouseLocation() 在部分执行器（含模拟环境）会返回 (0,0) 或带
+-- GuiInset 偏移。混用两者会让「按下瞬间」与「移动过程」用不同的原点，表现为
+-- 拖动、收起时窗口/悬浮球突然向上跳一下。这里优先取 InputObject.Position。
+local function inputPoint(i)
+    local p = i and i.Position
+    if p and p.X ~= nil and p.Y ~= nil then return p.X, p.Y end
+    local ok, m = pcall(function() return UserInputService:GetMouseLocation() end)
+    if ok and m and m.X ~= nil and m.Y ~= nil then return m.X, m.Y end
+    return 0, 0
 end
 
 -- ===========================================================================
 -- ConfigKey：把控件状态按 ConfigKey 保存到窗口对应 folder 的 ValueBase 中
--- （DynamicCow 风格：配置以实例形式落在 <FolderName>/Config 文件夹里）
+-- （DynamicCow 风格：配置以实例形式落在 AsLab/<Folder>/Config 文件夹里，
+--  同时序列化为同目录的 config.json）
 -- ===========================================================================
 local function makeConfigValue(win, key, kind)
     local folder = win and win._configFolder
@@ -223,22 +260,94 @@ local function syncConfigValue(ctrl)
     end)
 end
 
+local HttpService = game:GetService("HttpService")
+
+-- 不同环境把 HttpService 的 JSON 方法暴露成两种形式：真机是「方法」(需 self)，
+-- 部分执行器 / 无头模拟是「普通函数」(第一个参数就是值)。用一次性探测选定
+-- 调用形式，避免把 HttpService 自身误编码进 config.json。
+local jsonEncodeValue, jsonDecodeRaw
+do
+    local probe = "__aslab_probe__"
+    local ok1, r1 = pcall(function() return HttpService:JSONEncode(probe) end)
+    if ok1 and type(r1) == "string" and r1:find("aslab_probe", 1, true) then
+        jsonEncodeValue = function(v) return HttpService:JSONEncode(v) end
+    else
+        jsonEncodeValue = function(v) return HttpService.JSONEncode(v) end
+    end
+    local ok2, r2 = pcall(function() return HttpService:JSONDecode('{"__aslab_probe__":1}') end)
+    if ok2 and type(r2) == "table" and r2.__aslab_probe__ == 1 then
+        jsonDecodeRaw = function(s) return HttpService:JSONDecode(s) end
+    else
+        jsonDecodeRaw = function(s) return HttpService.JSONDecode(s) end
+    end
+end
+
+-- Color3 无法直接 JSONEncode，用带标记的表承载，读回时还原
+local function cfgToJSON(v)
+    if typeof(v) == "Color3" then
+        return { __aslab_color3 = { r = v.R, g = v.G, b = v.B } }
+    end
+    return v
+end
+
+local function jsonToCfg(v)
+    if type(v) == "table" and type(v.__aslab_color3) == "table" then
+        local c = v.__aslab_color3
+        return Color3.new(tonumber(c.r) or 0, tonumber(c.g) or 0, tonumber(c.b) or 0)
+    end
+    return v
+end
+
 function Library:SaveConfig()
+    -- 1) ValueBase 镜像（DynamicCow 风格，便于运行时其它脚本读取）
     for _, ctrl in pairs(self._config or {}) do
         if ctrl then syncConfigValue(ctrl) end
+    end
+    -- 2) config.json：落在 AsLab/<Folder>/config.json，跨会话真正持久化
+    local path = self._configPath
+    if path then
+        pcall(function()
+            local data = {}
+            for key, ctrl in pairs(self._config or {}) do
+                if ctrl and ctrl._configCurrent ~= nil then
+                    data[key] = cfgToJSON(ctrl._configCurrent)
+                end
+            end
+            writefile(path, jsonEncodeValue(data))
+        end)
     end
     return self
 end
 
 function Library:LoadConfig()
-    for _, ctrl in pairs(self._config or {}) do
-        local v = ctrl and ctrl._configValue
-        if v and ctrl.Set then
-            pcall(function()
-                if v:IsA("BoolValue") then ctrl:Set(v.Value)
-                elseif v:IsA("NumberValue") then ctrl:Set(v.Value)
-                elseif v:IsA("Color3Value") then ctrl:Set(v.Value) end
-            end)
+    -- 优先读 config.json；文件不存在或解析失败时回退到 ValueBase 实例
+    local path = self._configPath
+    local jsonData = nil
+    if path then
+        pcall(function()
+            if type(isfile) == "function" and isfile(path) then
+                local raw = readfile(path)
+                if raw and raw ~= "" then
+                    local ok, d = pcall(function() return jsonDecodeRaw(raw) end)
+                    if ok and type(d) == "table" then jsonData = d end
+                end
+            end
+        end)
+    end
+    for key, ctrl in pairs(self._config or {}) do
+        local applied = false
+        if jsonData and jsonData[key] ~= nil and ctrl.Set then
+            applied = pcall(function() ctrl:Set(jsonToCfg(jsonData[key])) end)
+        end
+        if not applied then
+            local v = ctrl and ctrl._configValue
+            if v and ctrl.Set then
+                pcall(function()
+                    if v:IsA("BoolValue") then ctrl:Set(v.Value)
+                    elseif v:IsA("NumberValue") then ctrl:Set(v.Value)
+                    elseif v:IsA("Color3Value") then ctrl:Set(v.Value) end
+                end)
+            end
         end
     end
     return self
@@ -328,13 +437,13 @@ local function makeBox(parent, w, text)
     label.TextYAlignment = Enum.TextYAlignment.Center
     label.BackgroundTransparency = 1
     label.Active = false
-    label.ZIndex = 10002
+    label.ZIndex = ZBASE + 2
     local hit = Instance.new("TextButton", box)
     hit.Size = UDim2.fromScale(1, 1)
     hit.BackgroundTransparency = 1
     hit.Text = ""
     hit.AutoButtonColor = false
-    hit.ZIndex = 10003
+    hit.ZIndex = ZBASE + 3
     local conflict = Instance.new("TextLabel", box)
     conflict.Name = "Conflict"
     conflict.AnchorPoint = Vector2.new(1, 0.5)
@@ -349,7 +458,7 @@ local function makeBox(parent, w, text)
     conflict.TextTruncate = Enum.TextTruncate.AtEnd
     conflict.BackgroundTransparency = 1
     conflict.Active = false
-    conflict.ZIndex = 10004
+    conflict.ZIndex = ZBASE + 4
     conflict:SetAttribute("_skipFade", true)
     return box, label, hit, conflict
 end
@@ -694,7 +803,7 @@ createShortcut = function(win, ctrl)
     sc.BackgroundColor3 = Style.Glass
     sc.BackgroundTransparency = 0.35
     setGroupTransparency(sc, 1)
-    sc.ZIndex = 10030
+    sc.ZIndex = ZBASE + 30
     sc.ClipsDescendants = true
     local c = Instance.new("UICorner", sc)
     c.CornerRadius = UDim.new(0, s(9))
@@ -730,7 +839,7 @@ createShortcut = function(win, ctrl)
     label.TextYAlignment = Enum.TextYAlignment.Center
     label.BackgroundTransparency = 1
     label.Active = false
-    label.ZIndex = 10002
+    label.ZIndex = ZBASE + 2
 
     local press = Instance.new("Frame", sc)
     press.Size = UDim2.fromScale(1, 1)
@@ -738,14 +847,14 @@ createShortcut = function(win, ctrl)
     press.BackgroundTransparency = 1
     press.BorderSizePixel = 0
     press.Active = false
-    press.ZIndex = 10001
+    press.ZIndex = ZBASE + 1
 
     local hit = Instance.new("TextButton", sc)
     hit.Size = UDim2.fromScale(1, 1)
     hit.BackgroundTransparency = 1
     hit.Text = ""
     hit.AutoButtonColor = false
-    hit.ZIndex = 10003
+    hit.ZIndex = ZBASE + 3
 
     local uscale = Instance.new("UIScale", sc)
     uscale.Scale = 1
@@ -771,12 +880,20 @@ createShortcut = function(win, ctrl)
         end
         if fire and not moved then fireClick(ctrl) end
     end
+    -- 记录本次按下对应的 InputObject，供 MouseButton1Down 取真实坐标
+    local dragStartInput = nil
+    hit.InputBegan:Connect(function(input)
+        local t = input.UserInputType
+        if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
+            dragStartInput = input
+        end
+    end)
     hit.MouseButton1Down:Connect(function()
         if dragging then stopDrag(false) end
         dragging = true
         moved = false
-        local m = UserInputService:GetMouseLocation()
-        startX, startY = m.X, m.Y
+        startX, startY = inputPoint(dragStartInput)
+        dragStartInput = nil
         originX, originY = sc.Position.X.Offset, sc.Position.Y.Offset
         -- 按压反馈：所有快捷按钮统一执行缩放 + 暗色叠层淡入过渡动画
         TweenService:Create(uscale, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 }):Play()
@@ -785,8 +902,8 @@ createShortcut = function(win, ctrl)
             if not dragging then return end
             local t = i.UserInputType
             if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
-                local m2 = UserInputService:GetMouseLocation()
-                local dx, dy = m2.X - startX, m2.Y - startY
+                local mx, my = inputPoint(i)
+                local dx, dy = mx - startX, my - startY
                 if math.abs(dx) + math.abs(dy) > 3 then moved = true end
                 sc.Position = UDim2.fromOffset(originX + dx, originY + dy)
             end
@@ -834,7 +951,7 @@ buildDetail = function(win, ctrl)
     setGroupTransparency(layer, 1)
     layer.Visible = false
     layer.ClipsDescendants = false
-    layer.ZIndex = 10005
+    layer.ZIndex = ZBASE + 5
     ctrl._detailLayer = layer
     ctrl._detailCount = 0
 
@@ -910,7 +1027,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         valLabel.TextXAlignment = Enum.TextXAlignment.Center
         valLabel.BackgroundTransparency = 1
         valLabel.Active = false
-        valLabel.ZIndex = 10002
+        valLabel.ZIndex = ZBASE + 2
 
         local track = Instance.new("Frame", row)
         track.Name = "SliderTrack"
@@ -1113,10 +1230,10 @@ addDetailRow = function(win, ctrl, kind, opts)
         swatch.Size = UDim2.new(1, -s(6), 1, -s(6))
         swatch.Position = UDim2.new(0, s(3), 0, s(3))
         swatch.BorderSizePixel = 0
-        swatch.ZIndex = 10001
+        swatch.ZIndex = ZBASE + 1
         local swc = Instance.new("UICorner", swatch)
         swc.CornerRadius = UDim.new(0, s(5))
-        label.ZIndex = 10002
+        label.ZIndex = ZBASE + 2
         label.TextColor3 = Color3.new(1, 1, 1)
         local lstroke = Instance.new("UIStroke", label)
         lstroke.Color = Color3.new(0, 0, 0)
@@ -1139,7 +1256,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         })
         panel.ClipsDescendants = true
         panel.Visible = false
-        panel.ZIndex = 10040
+        panel.ZIndex = ZBASE + 40
         local pst = Instance.new("UIStroke", panel)
         pst.Color = Style.BlockStroke
         pst.Transparency = 0.4
@@ -1189,7 +1306,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         cursor.Size = UDim2.fromOffset(s(10), s(10))
         cursor.BackgroundTransparency = 1
         cursor.BorderSizePixel = 0
-        cursor.ZIndex = 10003
+        cursor.ZIndex = ZBASE + 3
         local cc = Instance.new("UICorner", cursor)
         cc.CornerRadius = UDim.new(1, 0)
         local cstroke = Instance.new("UIStroke", cursor)
@@ -1249,6 +1366,10 @@ addDetailRow = function(win, ctrl, kind, opts)
                 math.floor(c.G * 255 + 0.5),
                 math.floor(c.B * 255 + 0.5))
         end
+        -- obj 必须先声明再被 refresh 闭包捕获：旧写法把 local obj 放在 refresh
+        -- 之后，闭包里引用的是全局 obj(nil)，导致取色后 _configCurrent 不更新，
+        -- SaveConfig 写进 config.json 的仍是默认色。
+        local obj
         local function refresh(fire)
             local c = Color3.fromHSV(h, sat, val)
             local hex = toHex(c)
@@ -1262,17 +1383,24 @@ addDetailRow = function(win, ctrl, kind, opts)
             if fire and opts.Callback then pcall(opts.Callback, c) end
             if obj and obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
         end
-        local function grab(apply)
-            local m = UserInputService:GetMouseLocation()
-            apply(m.X, m.Y)
+        -- 触摸 / 鼠标统一取 InputObject.Position：旧实现「按下」时用
+        -- GetMouseLocation()（部分执行器恒返回 (0,0) 或带 GuiInset 偏移），
+        -- 「移动」时用 i.Position，两个坐标源不一致 → 触摸位置整体偏移。
+        -- 同时补上 Touch 分支，触屏拖动与抬手才能正确跟随 / 释放。
+        local function grab(apply, initial)
+            local px, py = inputPoint(initial)
+            apply(px, py)
             local conn = UserInputService.InputChanged:Connect(function(i)
-                if i.UserInputType == Enum.UserInputType.MouseMovement then
-                    apply(i.Position.X, i.Position.Y)
+                local t = i.UserInputType
+                if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
+                    local mx, my = inputPoint(i)
+                    apply(mx, my)
                 end
             end)
             local up
             up = UserInputService.InputEnded:Connect(function(i)
-                if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                local t = i.UserInputType
+                if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
                     conn:Disconnect()
                     up:Disconnect()
                 end
@@ -1296,17 +1424,28 @@ addDetailRow = function(win, ctrl, kind, opts)
         svHit.BackgroundTransparency = 1
         svHit.Text = ""
         svHit.AutoButtonColor = false
-        svHit.ZIndex = 10005
-        svHit.MouseButton1Down:Connect(function() grab(setSV) end)
+        svHit.ZIndex = ZBASE + 5
+        svHit.InputBegan:Connect(function(input)
+            local t = input.UserInputType
+            if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then return end
+            grab(setSV, input)
+        end)
         local hueHit = Instance.new("TextButton", panel)
         hueHit.Size = UDim2.fromOffset(svW, s(12))
         hueHit.Position = UDim2.fromOffset(pad, hueY)
         hueHit.BackgroundTransparency = 1
         hueHit.Text = ""
         hueHit.AutoButtonColor = false
-        hueHit.ZIndex = 10005
-        hueHit.MouseButton1Down:Connect(function() grab(setHue) end)
+        hueHit.ZIndex = ZBASE + 5
+        hueHit.InputBegan:Connect(function(input)
+            local t = input.UserInputType
+            if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then return end
+            grab(setHue, input)
+        end)
 
+        -- 触发块登记：展开后点击「面板 + 触发块」之外时自动收起
+        win._colorTriggers = win._colorTriggers or {}
+        table.insert(win._colorTriggers, hit)
         hit.MouseButton1Click:Connect(function()
             for _, p in ipairs(win._colorPanels or {}) do
                 if p ~= panel then p.Visible = false end
@@ -1315,7 +1454,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         end)
 
         refresh(false)
-        local obj = { Value = def }
+        obj = { Value = def }
         function obj:Set(c)
             if typeof(c) == "Color3" then
                 h, sat, val = c:ToHSV()
@@ -1799,10 +1938,14 @@ syncOrbBase = function(win)
     if win._orbDragging then return end
     if win._collapsed then return end
     pcall(function()
-        local a = win._gui.AbsoluteSize
-        if a and a.X > 0 then
-            local p = win._main.AbsolutePosition
-            if p then win._orbBaseX, win._orbBaseY = p.X + TITLE_ICON_DX, p.Y + TITLE_ICON_DY end
+        -- 与拖动 / 收起共用同一套「Position 纯 offset」坐标系。
+        -- 旧实现读 main.AbsolutePosition（含 GuiInset 与 UIScale 补偿），
+        -- 与 orb.Position 的 offset 语义不同，revealMain 时会把悬浮球基准
+        -- 悄悄上移，收起动画结束就出现「向上闪现」。
+        local p = win._main.Position
+        if p then
+            win._orbBaseX = p.X.Offset + TITLE_ICON_DX
+            win._orbBaseY = p.Y.Offset + TITLE_ICON_DY
         end
     end)
     win._orbSide = computeSide(win)
@@ -1917,7 +2060,7 @@ pushToast = function(win, opts)
     frame.BackgroundTransparency = 0.32
     setGroupTransparency(frame, 1)
     frame.BorderSizePixel = 0
-    frame.ZIndex = 10060
+    frame.ZIndex = ZBASE + 60
     frame.ClipsDescendants = true
     local corner = Instance.new("UICorner", frame)
     corner.CornerRadius = UDim.new(0, s(12))
@@ -1944,7 +2087,7 @@ pushToast = function(win, opts)
     tLabel.TextWrapped = false
     tLabel.BackgroundTransparency = 1
     tLabel.Active = false
-    tLabel.ZIndex = 10002
+    tLabel.ZIndex = ZBASE + 2
     local iLabel = Instance.new("TextLabel", frame)
     iLabel.Size = UDim2.fromOffset(w - padX * 2, iH)
     iLabel.Position = UDim2.fromOffset(padX, padY + tH + s(4))
@@ -1957,7 +2100,7 @@ pushToast = function(win, opts)
     iLabel.TextWrapped = false
     iLabel.BackgroundTransparency = 1
     iLabel.Active = false
-    iLabel.ZIndex = 10002
+    iLabel.ZIndex = ZBASE + 2
     local item = { frame = frame, h = h, _entering = true }
     table.insert(win._toasts, item)
     local y = NOTIFY_MARGIN
@@ -2056,9 +2199,10 @@ local function collapse(win)
     -- 快捷按钮常驻：收起窗口不再隐藏快捷按钮
 
     local main = win._main
-    local ap = main.AbsolutePosition
-    local ax = ap and ap.X or main.Position.X.Offset
-    local ay = ap and ap.Y or main.Position.Y.Offset
+    -- 用 main 自身的 Position（纯 offset）作为收拢基准，不用 AbsolutePosition：
+    -- 后者含 GuiInset / UIScale 补偿，与 orb.Position 的 offset 不是同一坐标系，
+    -- 会让收拢终点（也就是悬浮球最终位置）比预期高出一段 → 收起时向上闪现。
+    local ax, ay = main.Position.X.Offset, main.Position.Y.Offset
 
     -- 仿 WasUIPro MinimizeToDots：主窗口「边框自身」用 Size/Position 直接收缩，
     -- 不再用 UIScale 把整个窗口连内容一起缩放（那样内容会挤压变形）。
@@ -2165,33 +2309,59 @@ function Library.CreateWindow(opts)
     local holder = getHolder()
     if not holder then return nil end
 
-    -- Folder（DynamicCow 风格）：主文件夹名称为 AsLab。
-    -- 本地文件夹用于落地下载的资源（背景图等）；同名 Roblox Folder 用于整理 GUI 层级。
-    local FolderName = opts.Folder or "AsLab"
-    pcall(function() makefolder(FolderName) end)
+    -- Folder 签名（DynamicCow 风格）：AsLab 是固定的根目录，
+    -- opts.Folder 是「创建在 AsLab 下」的子文件夹名。背景图与 config.json
+    -- 都落在该子文件夹中：AsLab/<Folder>/background.png、AsLab/<Folder>/config.json。
+    -- 同名 Roblox Folder 层级 AsLab/<Folder>/Config 用于承载配置 ValueBase 镜像。
+    local RootFolder = "AsLab"
+    local SubFolder = "Default"
+    if type(opts.Folder) == "string" and opts.Folder ~= "" then
+        SubFolder = opts.Folder:gsub("[/\\]", "_")
+    end
+    local AssetDir = RootFolder .. "/" .. SubFolder
+    local ConfigPath = AssetDir .. "/config.json"
+    pcall(function()
+        makefolder(RootFolder)
+        makefolder(AssetDir)
+    end)
     local root = Instance.new("Folder", holder)
-    root.Name = FolderName
-    local configFolder = Instance.new("Folder", root)
+    root.Name = RootFolder
+    local sub = Instance.new("Folder", root)
+    sub.Name = SubFolder
+    local configFolder = Instance.new("Folder", sub)
     configFolder.Name = "Config"
 
-    local gui = Instance.new("ScreenGui", root)
-    gui.Name = FolderName .. "UI"
+    local gui = Instance.new("ScreenGui", sub)
+    gui.Name = SubFolder .. "UI"
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    -- 跨 ScreenGui 的层级由 DisplayOrder 决定，ZIndex 仅在本 GUI 内有效；
+    -- DisplayOrder 统一 +100000，确保挂在 gethui() 隐藏容器里也不会被外部 UI 压住。
+    gui.DisplayOrder = 100000
+
+    -- main 一律用「纯 offset」定位：拖动、收起、悬浮球基准都以
+    -- Position.X/Y.Offset 为唯一坐标系。旧写法 UDim2.new(0.5, -W/2, 0.5, -H/2)
+    -- 是 scale+offset 混合，拖动时一旦用 AbsolutePosition 反推就会与 offset
+    -- 语义错位（真机表现为窗口/悬浮球向上闪现）。
+    local vw0, vh0 = viewport()
+    local initW = Size.X.Offset + (Size.X.Scale or 0) * vw0
+    local initH = Size.Y.Offset + (Size.Y.Scale or 0) * vh0
+    local initX = (vw0 - initW) / 2
+    local initY = (vh0 - initH) / 2
 
     local main = makeGlass(gui, {
         Name = "Main",
         Class = "Frame",
         Size = Size,
-        Position = UDim2.new(0.5, -Size.X.Offset / 2, 0.5, -Size.Y.Offset / 2),
+        Position = UDim2.fromOffset(initX, initY),
         Transparency = Style.GlassTransparency,
         Radius = UDim.new(0, s(24)),
         Highlight = 0.82,
     })
     main.AnchorPoint = Vector2.new(0, 0)
     -- main 为 Frame，无 GroupTransparency（始终可见）
-    main.ZIndex = 10001
+    main.ZIndex = ZBASE + 1
     main.ClipsDescendants = true  -- 裁切到窗口圆角，背景图随窗口圆角
     local mainScale = Instance.new("UIScale", main)
     mainScale.Scale = 1
@@ -2312,7 +2482,7 @@ function Library.CreateWindow(opts)
     scroller.ScrollingDirection = Enum.ScrollingDirection.Y
     scroller.CanvasSize = UDim2.fromOffset(0, 0)
     scroller.ClipsDescendants = true
-    scroller.ZIndex = 10002
+    scroller.ZIndex = ZBASE + 2
 
     local footer = Instance.new("Frame", main)
     footer.Name = "Footer"
@@ -2320,7 +2490,7 @@ function Library.CreateWindow(opts)
     footer.Position = UDim2.new(0, PAD / 2, 1, -FOOTER_H - PAD)
     footer.BackgroundTransparency = 1
     footer.BorderSizePixel = 0
-    footer.ZIndex = 10006
+    footer.ZIndex = ZBASE + 6
     local footerSep = Instance.new("Frame", footer)
     footerSep.Name = "FooterSeparator"
     footerSep.Size = UDim2.new(0, SIDEBAR_W + TAB_AREA_GAP / 2 + 1 + PAD / 2, 0, 1)
@@ -2337,7 +2507,7 @@ function Library.CreateWindow(opts)
         b.BackgroundTransparency = 1
         b.Text = ""
         b.AutoButtonColor = false
-        b.ZIndex = 10007
+        b.ZIndex = ZBASE + 7
         local ic = Instance.new("ImageLabel", b)
         ic.Name = "Icon"
         ic.Size = UDim2.new(0.68, 0, 0.68, 0)
@@ -2361,15 +2531,15 @@ function Library.CreateWindow(opts)
     orb.Name = "Orb"
     orb.Size = UDim2.fromOffset(ORB, ORB)
     local vw, vh = viewport()
-    local orbBaseX = vw / 2 - Size.X.Offset / 2 + TITLE_ICON_DX
-    local orbBaseY = vh / 2 - Size.Y.Offset / 2 + TITLE_ICON_DY
+    local orbBaseX = initX + TITLE_ICON_DX
+    local orbBaseY = initY + TITLE_ICON_DY
     orb.Position = UDim2.fromOffset(orbBaseX, orbBaseY)
     orb.AnchorPoint = Vector2.new(0, 0)
     orb.BackgroundColor3 = Style.Glass
     orb.BackgroundTransparency = Style.GlassTransparency
     setGroupTransparency(orb, 1)
     orb.Visible = false
-    orb.ZIndex = 10050
+    orb.ZIndex = ZBASE + 50
     orb.ClipsDescendants = true
     local orbCorner = Instance.new("UICorner", orb)
     orbCorner.CornerRadius = UDim.new(0, ORB / 2)
@@ -2406,7 +2576,7 @@ function Library.CreateWindow(opts)
     orbIcon.Position = UDim2.fromOffset(ORB / 2, ORB / 2)
     orbIcon.BackgroundTransparency = 1
     orbIcon.Active = false
-    orbIcon.ZIndex = 10051
+    orbIcon.ZIndex = ZBASE + 51
     applyIcon(orbIcon, TitleIcon)
     local orbInfo = Instance.new("TextLabel", orb)
     orbInfo.Name = "OrbInfo"
@@ -2422,7 +2592,7 @@ function Library.CreateWindow(opts)
     orbInfo.TextTruncate = Enum.TextTruncate.AtEnd
     orbInfo.BackgroundTransparency = 1
     orbInfo.Active = false
-    orbInfo.ZIndex = 10051
+    orbInfo.ZIndex = ZBASE + 51
     orbInfo:SetAttribute("_skipFade", true)
     local orbHit = Instance.new("TextButton", orb)
     orbHit.Name = "Hit"
@@ -2430,7 +2600,7 @@ function Library.CreateWindow(opts)
     orbHit.BackgroundTransparency = 1
     orbHit.Text = ""
     orbHit.AutoButtonColor = false
-    orbHit.ZIndex = 10052
+    orbHit.ZIndex = ZBASE + 52
 
     local orbExt = Instance.new("NumberValue", gui)
     orbExt.Name = "OrbExt"
@@ -2441,8 +2611,13 @@ function Library.CreateWindow(opts)
 
     local win = {
         _gui = gui,
-        _folder = root,
-        _folderName = FolderName,
+        _folder = sub,
+        _rootFolder = root,
+        _rootFolderName = RootFolder,
+        _folderName = SubFolder,
+        _assetDir = AssetDir,
+        _configPath = ConfigPath,
+        _holderSource = HolderSource,
         _configFolder = configFolder,
         _config = {},
         _main = main,
@@ -2512,16 +2687,17 @@ function Library.CreateWindow(opts)
         if winDrag then stopWinDrag() end
         winDrag = true
         winMoved = false
-        local m = UserInputService:GetMouseLocation()
-        wsx, wsy = m.X, m.Y
-        local ap = win._main.AbsolutePosition
-        wox, woy = ap.X, ap.Y
+        -- 起点用本次输入的 Position；原点用 main 自身的 Position（纯 offset）。
+        -- 旧实现用 GetMouseLocation() + AbsolutePosition，两者在真机差一个
+        -- GuiInset / UIScale 补偿，第一次移动就会把窗口瞬移（向上闪现）。
+        wsx, wsy = inputPoint(input)
+        wox, woy = win._main.Position.X.Offset, win._main.Position.Y.Offset
         winMoveConn = UserInputService.InputChanged:Connect(function(i)
             if not winDrag then return end
             local it = i.UserInputType
             if it == Enum.UserInputType.MouseMovement or it == Enum.UserInputType.Touch then
-                local m2 = UserInputService:GetMouseLocation()
-                local dx, dy = m2.X - wsx, m2.Y - wsy
+                local mx, my = inputPoint(i)
+                local dx, dy = mx - wsx, my - wsy
                 if math.abs(dx) + math.abs(dy) > 3 then winMoved = true end
                 local vw, vh = viewport()
                 local nx = math.clamp(wox + dx, 0, math.max(0, vw - win._sizeX))
@@ -2546,13 +2722,12 @@ function Library.CreateWindow(opts)
         if orbMoveConn then pcall(function() orbMoveConn:Disconnect() end) orbMoveConn = nil end
         if orbEndConn then pcall(function() orbEndConn:Disconnect() end) orbEndConn = nil end
     end
-    orbHit.MouseButton1Down:Connect(function()
+    local function startOrbDrag(input)
         if orbDragging then stopOrbDrag() end
         orbDragging = true
         win._orbDragging = true
         orbMoved = false
-        local m = UserInputService:GetMouseLocation()
-        orbStartX, orbStartY = m.X, m.Y
+        orbStartX, orbStartY = inputPoint(input)
         orbOriginX, orbOriginY = win._orbBaseX, win._orbBaseY
         -- 拖拽开始先收掉残留的扩展/混合补间并吸附到收起基准位，避免起点抖动
         if win._orbExtTween then pcall(function() win._orbExtTween:Cancel() end) win._orbExtTween = nil end
@@ -2564,8 +2739,8 @@ function Library.CreateWindow(opts)
             if not orbDragging then return end
             local t = i.UserInputType
             if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
-                local m2 = UserInputService:GetMouseLocation()
-                local dx, dy = m2.X - orbStartX, m2.Y - orbStartY
+                local mx, my = inputPoint(i)
+                local dx, dy = mx - orbStartX, my - orbStartY
                 if math.abs(dx) + math.abs(dy) > 3 then orbMoved = true end
                 local w, h = viewport()
                 win._orbBaseX = math.clamp(orbOriginX + dx, 0, math.max(0, w - ORB))
@@ -2583,6 +2758,18 @@ function Library.CreateWindow(opts)
                 if not wasMoved then expand(win) end
             end
         end)
+    end
+    -- InputBegan 能拿到本次输入的真实坐标（真机 / 触屏 / 模拟环境都可靠），
+    -- 不再依赖 GetMouseLocation()（部分执行器恒返回 0,0 → 按下瞬间跳位）。
+    orbHit.InputBegan:Connect(function(input)
+        local t = input.UserInputType
+        if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then return end
+        startOrbDrag(input)
+    end)
+    -- 兼容少数只派发 MouseButton1Down 的执行器：InputBegan 已开启时不重复
+    orbHit.MouseButton1Down:Connect(function()
+        if orbDragging then return end
+        startOrbDrag(nil)
     end)
 
     -- 点击展开兜底：部分执行器 / 触屏下 MouseButton1Down 与 InputEnded 的
@@ -2595,6 +2782,39 @@ function Library.CreateWindow(opts)
 
     UserInputService.InputBegan:Connect(function(input)
         if not (gui and gui.Parent) then return end
+
+        -- ColorPicker：面板展开时点击「面板 / 触发块」之外的任意位置自动收起
+        local openPicker = false
+        for _, p in ipairs(win._colorPanels or {}) do
+            if p and p.Visible then openPicker = true break end
+        end
+        if openPicker then
+            local t = input.UserInputType
+            if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
+                local px, py = inputPoint(input)
+                local function hitTest(o, tol)
+                    if not (o and o.Parent) then return false end
+                    local a, sz = o.AbsolutePosition, o.AbsoluteSize
+                    if not (a and sz) then return false end
+                    tol = tol or 2
+                    return px >= a.X - tol and px <= a.X + sz.X + tol
+                        and py >= a.Y - tol and py <= a.Y + sz.Y + tol
+                end
+                local inside = false
+                for _, p in ipairs(win._colorPanels or {}) do
+                    if p.Visible and hitTest(p) then inside = true break end
+                end
+                if not inside then
+                    for _, tr in ipairs(win._colorTriggers or {}) do
+                        if hitTest(tr) then inside = true break end
+                    end
+                end
+                if not inside then
+                    for _, p in ipairs(win._colorPanels or {}) do p.Visible = false end
+                end
+            end
+        end
+
         local listen = win._listening
         if listen then
             local t = input.UserInputType
@@ -2641,13 +2861,14 @@ function Library.CreateWindow(opts)
         task.spawn(function()
             local ok, data = pcall(function() return game:HttpGet(bgUrl) end)
             if ok and type(data) == "string" and #data > 0 then
-                -- 下载到本地对应名称 folder 中存储
+                -- 下载到 AsLab/<Folder>/ 子文件夹中存储
                 pcall(function()
-                    makefolder(FolderName)
-                    writefile(FolderName .. "/background.png", data)
+                    makefolder(RootFolder)
+                    makefolder(AssetDir)
+                    writefile(AssetDir .. "/background.png", data)
                 end)
                 local asset
-                pcall(function() asset = getcustomasset(FolderName .. "/background.png") end)
+                pcall(function() asset = getcustomasset(AssetDir .. "/background.png") end)
                 if asset then background.Image = asset end
             end
             revealMain()
@@ -2706,7 +2927,7 @@ function Library:AddTab(name, icon)
     row.Text = ""
     row.AutoButtonColor = false
     row.LayoutOrder = idx
-    row.ZIndex = 10002
+    row.ZIndex = ZBASE + 2
 
     local sel = Instance.new("Frame", row)
     sel.Name = "TabSel"
@@ -2716,7 +2937,7 @@ function Library:AddTab(name, icon)
     sel.BackgroundTransparency = 1
     sel.BorderSizePixel = 0
     sel.Visible = false
-    sel.ZIndex = 10001
+    sel.ZIndex = ZBASE + 1
     sel:SetAttribute("_skipFade", true)
     local selCorner = Instance.new("UICorner", sel)
     selCorner.CornerRadius = Cfg.TabSelCorner
@@ -2745,7 +2966,7 @@ function Library:AddTab(name, icon)
         ticon.AnchorPoint = Vector2.new(0, 0.5)
         ticon.BackgroundTransparency = 1
         ticon.ImageColor3 = Cfg.TabInactiveColor
-        ticon.ZIndex = 10003
+        ticon.ZIndex = ZBASE + 3
         applyIcon(ticon, icon, Cfg.TabInactiveColor)
     end
 
@@ -2758,7 +2979,7 @@ function Library:AddTab(name, icon)
     tname.Font = Style.Font
     tname.TextYAlignment = Enum.TextYAlignment.Center
     tname.TextXAlignment = Enum.TextXAlignment.Left
-    tname.ZIndex = 10003
+    tname.ZIndex = ZBASE + 3
     if hasIcon then
         local x = s(Cfg.TabRowPadX + Cfg.TabIconSize + Cfg.TabTextGap)
         tname.Size = UDim2.new(1, -x, 1, 0)
