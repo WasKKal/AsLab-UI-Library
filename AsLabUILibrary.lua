@@ -421,6 +421,35 @@ local function ctrlKeyId(ctrl)
     return id
 end
 
+local DEFAULT_CONFIG = "Default"
+local CONFIG_DIR_NAME = "Configs"
+
+local function sanitizeConfigName(name)
+    if name == nil then return nil end
+    local raw = tostring(name)
+    raw = raw:gsub("^%s+", ""):gsub("%s+$", "")
+    if raw == "" then return nil end
+    raw = raw:gsub("[\\/:*?\"<>|]", "_")
+    if #raw > 40 then raw = raw:sub(1, 40) end
+    return raw
+end
+
+local function resolveConfigPath(win, name)
+    if not (win and win._assetDir) then return nil, nil end
+    local n = sanitizeConfigName(name) or win._configName or DEFAULT_CONFIG
+    if n == DEFAULT_CONFIG then
+        return win._assetDir .. "/config.json", DEFAULT_CONFIG
+    end
+    local dir = win._configDir or (win._assetDir .. "/" .. CONFIG_DIR_NAME)
+    return dir .. "/" .. n .. ".json", n
+end
+
+local function configFileExists(path)
+    if type(path) ~= "string" or type(isfile) ~= "function" then return false end
+    local ok, exists = pcall(isfile, path)
+    return ok and exists == true
+end
+
 local function viewportSize()
     local vw, vh
     pcall(function()
@@ -432,12 +461,17 @@ local function viewportSize()
     return vw, vh
 end
 
-function Library:SaveConfig()
+function Library:SaveConfig(name)
+    local path, resolved = resolveConfigPath(self, name)
+    if path then
+        self._configPath = path
+        self._configName = resolved
+    end
     self._savingConfig = true
     for _, ctrl in pairs(self._config or {}) do
         if ctrl then syncConfigValue(ctrl) end
     end
-    local path = self._configPath
+    if not path then path = self._configPath end
     if path then
         pcall(function()
             local data = {}
@@ -469,6 +503,10 @@ function Library:SaveConfig()
             if next(keys) ~= nil then data.__keys = keys end
             if next(shortcuts) ~= nil then data.__shortcuts = shortcuts end
             writefile(path, jsonEncodeValue(data))
+            if self._assetDir then
+                writefile(self._assetDir .. "/active.json",
+                    jsonEncodeValue({ name = self._configName or DEFAULT_CONFIG }))
+            end
         end)
     end
     self._savingConfig = false
@@ -486,12 +524,27 @@ function Library:_autoSave()
     end)
 end
 
-function Library:LoadConfig()
-    local path = self._configPath
+function Library:LoadConfig(name)
+    if name == nil and self._assetDir then
+        local active
+        pcall(function()
+            local ap = self._assetDir .. "/active.json"
+            if configFileExists(ap) then
+                local ok, d = pcall(function() return jsonDecodeRaw(readfile(ap)) end)
+                if ok and type(d) == "table" and type(d.name) == "string" and d.name ~= "" then
+                    active = d.name
+                end
+            end
+        end)
+        if active and configFileExists(resolveConfigPath(self, active)) then name = active end
+    end
+    local path, resolved = resolveConfigPath(self, name)
+    if not path then return false end
+    if name ~= nil and not configFileExists(path) then return false end
     local jsonData = nil
     if path then
         pcall(function()
-            if type(isfile) == "function" and isfile(path) then
+            if configFileExists(path) then
                 local raw = readfile(path)
                 if raw and raw ~= "" then
                     local ok, d = pcall(function() return jsonDecodeRaw(raw) end)
@@ -500,6 +553,8 @@ function Library:LoadConfig()
             end
         end)
     end
+    self._configPath = path
+    self._configName = resolved
     self._loadingConfig = true
     for key, ctrl in pairs(self._config or {}) do
         local applied = false
@@ -565,7 +620,98 @@ function Library:LoadConfig()
     end
     self._loadingConfig = false
     if type(refreshConflicts) == "function" then pcall(refreshConflicts, self) end
-    return self
+    return true
+end
+
+local function listConfigFiles(win)
+    local out, seen = {}, {}
+    local dir = win._configDir or (win._assetDir and (win._assetDir .. "/" .. CONFIG_DIR_NAME))
+    if dir and type(listfiles) == "function" then
+        pcall(function()
+            if type(isfolder) == "function" and not isfolder(dir) then return end
+            local files = listfiles(dir)
+            if type(files) ~= "table" then return end
+            for _, f in ipairs(files) do
+                local base = tostring(f):match("([^/\\]+)%.json$")
+                if base and base ~= "" and not seen[base] then
+                    seen[base] = true
+                    out[#out + 1] = base
+                end
+            end
+        end)
+    end
+    table.sort(out, function(a, b) return a:lower() < b:lower() end)
+    return out
+end
+
+function Library:GetConfigName()
+    return self._configName or DEFAULT_CONFIG
+end
+
+function Library:GetConfigPath()
+    return self._configPath
+end
+
+function Library:GetConfigs()
+    local out, seen = { DEFAULT_CONFIG }, { [DEFAULT_CONFIG] = true }
+    for _, n in ipairs(listConfigFiles(self)) do
+        if not seen[n] and n ~= DEFAULT_CONFIG then
+            seen[n] = true
+            out[#out + 1] = n
+        end
+    end
+    return out
+end
+
+function Library:ConfigExists(name)
+    local path = resolveConfigPath(self, name)
+    return configFileExists(path)
+end
+
+function Library:SetConfig(name)
+    local path, resolved = resolveConfigPath(self, name)
+    if not path then return false end
+    self._configPath = path
+    self._configName = resolved
+    return true
+end
+
+function Library:DeleteConfig(name)
+    local path, resolved = resolveConfigPath(self, name)
+    if not path or resolved == DEFAULT_CONFIG then return false end
+    local removed = false
+    pcall(function()
+        if configFileExists(path) then
+            delfile(path)
+            removed = true
+        end
+    end)
+    if self._configName == resolved then
+        self._configName = DEFAULT_CONFIG
+        self._configPath = self._assetDir .. "/config.json"
+    end
+    return removed
+end
+
+function Library:RenameConfig(oldName, newName)
+    local from, fromName = resolveConfigPath(self, oldName)
+    local to, toName = resolveConfigPath(self, newName)
+    if not (from and to) then return false end
+    if fromName == DEFAULT_CONFIG or toName == DEFAULT_CONFIG then return false end
+    if fromName == toName or configFileExists(to) then return false end
+    local ok = false
+    pcall(function()
+        if configFileExists(from) then
+            writefile(to, readfile(from))
+            delfile(from)
+            ok = true
+        end
+    end)
+    if ok and self._configName == fromName then
+        self._configName = toName
+        self._configPath = to
+    end
+    return ok
 end
 
 local function makeGlass(parent, props)
@@ -3118,10 +3264,14 @@ function Library.CreateWindow(opts)
         SubFolder = opts.Folder:gsub("[/\\]", "_")
     end
     local AssetDir = RootFolder .. "/" .. SubFolder
-    local ConfigPath = AssetDir .. "/config.json"
+    local ConfigDir = AssetDir .. "/" .. CONFIG_DIR_NAME
+    local ConfigName = sanitizeConfigName(opts.ConfigName) or DEFAULT_CONFIG
+    local ConfigPath = (ConfigName == DEFAULT_CONFIG) and (AssetDir .. "/config.json")
+        or (ConfigDir .. "/" .. ConfigName .. ".json")
     pcall(function()
         makefolder(RootFolder)
         makefolder(AssetDir)
+        makefolder(ConfigDir)
     end)
     local root = Instance.new("Folder", holder)
     root.Name = RootFolder
@@ -3414,6 +3564,8 @@ function Library.CreateWindow(opts)
         _rootFolderName = RootFolder,
         _folderName = SubFolder,
         _assetDir = AssetDir,
+        _configDir = ConfigDir,
+        _configName = ConfigName,
         _configPath = ConfigPath,
         _holderSource = HolderSource,
         _configFolder = configFolder,

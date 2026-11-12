@@ -62,6 +62,26 @@ Tab:AddButton({ Text = "应用", Callback = function() print("已应用") end })
 | `AddTextBox` | 文本框 |
 | `AddParagraph` | 文本段落 |
 
+## 💾 配置（多配置槽）
+
+带 `ConfigKey` 的控件会自动落盘到 `AsLab/<Folder>/`：`config.json` 是默认槽，`Configs/<名字>.json` 是其他槽，`active.json` 记录上次使用的槽名。
+
+```lua
+win:SaveConfig()                 -- 保存到当前槽
+win:SaveConfig("PvP")            -- 另存为新配置，并把它设为当前槽
+win:LoadConfig("PvP")            -- 从指定配置读回，返回是否成功
+win:LoadConfig()                 -- 不传名字：读回上次使用的配置槽
+win:GetConfigs()                 -- { "Default", "PvP", ... }（Default 固定第一）
+win:GetConfigName()              -- 当前配置名
+win:GetConfigPath()              -- 当前配置的完整文件路径
+win:ConfigExists("PvP")          -- 配置是否存在
+win:SetConfig("Farm")            -- 只切槽，不读盘不写盘
+win:RenameConfig("Farm", "F2")   -- 改名（Default 不可改）
+win:DeleteConfig("F2")           -- 删除（Default 不可删，删当前槽会回落 Default）
+```
+
+按键绑定与快捷图标位置随配置一起保存（`__keys` / `__shortcuts`），换槽时一并恢复。
+
 ## 🎯 设计理念
 
 - **ImGui 即时模式**：控件在每一帧按需声明，逻辑与界面高度内聚，调试工具与设置面板开发效率极高。

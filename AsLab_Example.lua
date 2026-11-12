@@ -3,13 +3,15 @@
     ------------------------------------------------------------
     覆盖内容：
       Library.PreloadLucide / GetHolderSource / CreateWindow
-      Win:AddTab / ShowNotify / SetLanguage / GetLanguage / OnLanguageChanged / SaveConfig / LoadConfig
+      Win:AddTab / ShowNotify / SetLanguage / GetLanguage / OnLanguageChanged
+      多配置：SaveConfig(name) / LoadConfig(name) / GetConfigs / GetConfigName / GetConfigPath
+              SetConfig / RenameConfig / DeleteConfig / ConfigExists
       Tab:AddToggle / AddButton
       Ctrl:AddSlider / AddToggle / AddButton / AddColorPicker / AddDropdown
       Ctrl:Set / SetValue，Dropdown:Get / GetOptions / SetOptions / AddOption / RemoveOption
       详情页内置：Board-Key（按键绑定）、AddShortcut（快捷图标创建 / 拖动 / 删除）
       配置持久化 ConfigKey、窗口设置（比例 / 语言）、关闭二次确认、通知胶囊
-    说明：动态 Dropdown 需要 AsLabUILibrary 2026-11 之后的版本（Dropdown:SetOptions 等）。
+    说明：动态 Dropdown 与多配置 API 需要 AsLabUILibrary 2026-11 之后的版本。
 ]]
 
 local Library = loadstring(game:HttpGet("https://ghfast.top/https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/AsLabUILibrary.lua"))()
@@ -69,7 +71,15 @@ local Win = Library.CreateWindow({
             ["Long Text"] = "长文本",
             ["Auto Notify (1s)"] = "自动通知 (1秒)",
             ["Language"] = "语言",
+            ["Config"] = "配置",
+            ["Config Slot"] = "配置槽",
+            ["Enabled"] = "启用",
             ["Save Config"] = "保存配置",
+            ["New Config"] = "新建配置",
+            ["Load Default"] = "加载默认",
+            ["Rename Config"] = "重命名配置",
+            ["Delete Config"] = "删除配置",
+            ["List Configs"] = "列出全部",
             ["General"] = "通用",
             ["Visuals"] = "视觉",
             ["Dynamic"] = "动态",
@@ -339,7 +349,116 @@ TabSystem:AddButton({ Title = "Reset Everything", Icon = "trash-2", Callback = f
 end })
 
 -- ============================================================
--- 7. 通知页：ShowNotify + 语言切换
+-- 7. 配置页：多配置槽（创建 / 另存 / 加载 / 列举 / 改名 / 删除）
+-- ============================================================
+local TabConfig = Win:AddTab("Config", "database")
+
+local function hasConfig(list, name)
+    for _, n in ipairs(list) do if n == name then return true end end
+    return false
+end
+
+local cfgSwitching = false
+local ConfigDrop
+
+local ConfigSlot = TabConfig:AddToggle({ Title = "Config Slot", Icon = "server", Default = false })
+
+-- 下拉列出所有配置：GetConfigs 读取 AsLab/FullDemo/Configs/*.json
+ConfigDrop = ConfigSlot:AddDropdown({
+    Title = "Config",
+    Options = Win:GetConfigs(),
+    Default = Win:GetConfigName(),
+    Callback = function(v)
+        if cfgSwitching or v == Win:GetConfigName() then return end
+        -- LoadConfig(name)：从指定配置读取并写回所有带 ConfigKey 的控件
+        if Win:LoadConfig(v) then
+            Win:ShowNotify({ Title = "Config", Info = "Loaded " .. v, Time = 2 })
+        else
+            Win:ShowNotify({ Title = "Config", Info = "Not found: " .. v, Time = 2 })
+        end
+    end,
+})
+
+-- 这两个控件带 ConfigKey：换配置槽后值会跟着变，用来肉眼确认「确实从另一个档读回来了」
+local CfgSpeed = ConfigSlot:AddSlider({ Title = "Speed", Min = 0, Max = 100, Default = 50, Step = 1, ConfigKey = "cfg_speed" })
+local CfgEnabled = ConfigSlot:AddToggle({ Title = "Enabled", Default = true, ConfigKey = "cfg_enabled" })
+
+-- 把下拉的选项与选中项同步到库内的真实状态
+local function syncConfigDrop(select)
+    cfgSwitching = true
+    local list = Win:GetConfigs()
+    ConfigDrop:SetOptions(list)
+    local want = select or Win:GetConfigName()
+    if not hasConfig(list, want) then want = list[1] end
+    ConfigDrop:Set(want)
+    cfgSwitching = false
+    return list
+end
+
+-- 保存到当前配置槽
+TabConfig:AddButton({ Title = "Save Config", Icon = "save", Callback = function()
+    Win:SaveConfig()
+    Win:ShowNotify({ Title = "Saved", Info = Win:GetConfigName() .. " → " .. tostring(Win:GetConfigPath()), Time = 3 })
+end })
+
+-- 以当前控件状态另存为一个新配置，并切换过去
+TabConfig:AddButton({ Title = "New Config", Icon = "file-pen", Callback = function()
+    local list, name = Win:GetConfigs(), nil
+    for i = 1, 99 do
+        local cand = "Profile-" .. i
+        if not hasConfig(list, cand) then name = cand break end
+    end
+    name = name or ("Profile-" .. tostring(os.time()))
+    Win:SaveConfig(name)                 -- 传 name 即「另存为」，并把它设为当前槽
+    local all = syncConfigDrop(name)
+    Win:ShowNotify({ Title = "Created", Info = name .. " · " .. #all .. " configs", Time = 3 })
+end })
+
+-- 从默认配置读取并应用
+TabConfig:AddButton({ Title = "Load Default", Icon = "rotate-ccw", Callback = function()
+    if Win:LoadConfig("Default") then
+        syncConfigDrop("Default")
+        Win:ShowNotify({ Title = "Loaded", Info = "Default", Time = 2 })
+    else
+        Win:ShowNotify({ Title = "Config", Info = "Default 尚未保存过", Time = 2 })
+    end
+end })
+
+-- 重命名当前配置（Default 不允许改名）
+TabConfig:AddButton({ Title = "Rename Config", Icon = "pencil", Callback = function()
+    local cur = Win:GetConfigName()
+    local new = cur .. "-renamed"
+    if Win:RenameConfig(cur, new) then
+        syncConfigDrop(new)
+        Win:ShowNotify({ Title = "Renamed", Info = cur .. " → " .. new, Time = 3 })
+    else
+        Win:ShowNotify({ Title = "Rename failed", Info = "Default 不能改名，或目标已存在", Time = 3 })
+    end
+end })
+
+-- 删除当前配置（删完回落到 Default 并读回它的值）
+TabConfig:AddButton({ Title = "Delete Config", Icon = "trash-2", Callback = function()
+    local cur = Win:GetConfigName()
+    if Win:DeleteConfig(cur) then
+        Win:LoadConfig(Win:GetConfigName())
+        syncConfigDrop()
+        Win:ShowNotify({ Title = "Deleted", Info = cur .. " · back to " .. Win:GetConfigName(), Time = 3 })
+    else
+        Win:ShowNotify({ Title = "Delete failed", Info = "Default 不能删除", Time = 2 })
+    end
+end })
+
+-- 遍历所有配置（GetConfigs 返回名称数组，Default 固定排第一）
+ConfigSlot:AddButton({ Title = "List Configs", Icon = "list", Callback = function()
+    local list = Win:GetConfigs()
+    for i, n in ipairs(list) do
+        print(string.format("[AsLab] config %d/%d: %s%s", i, #list, n, n == Win:GetConfigName() and "  <- active" or ""))
+    end
+    Win:ShowNotify({ Title = "Configs (" .. #list .. ")", Info = table.concat(list, ", "), Time = 4 })
+end })
+
+-- ============================================================
+-- 8. 通知页：ShowNotify + 语言切换
 -- ============================================================
 TabNotify:AddButton({ Title = "Single", Icon = "bell", Callback = function()
     Win:ShowNotify({ Title = "Hello", Info = "A short toast.", Time = 4 })
@@ -380,18 +499,13 @@ LangToggle:AddDropdown({
     Callback = function(v) Win:SetLanguage(v) end,   -- 立即切换整套 UI 文案
 })
 
-TabNotify:AddButton({ Title = "Save Config", Icon = "save", Callback = function()
-    Win:SaveConfig()
-    Win:ShowNotify({ Title = "Config", Info = "Saved to AsLab/FullDemo/config.json", Time = 3 })
-end })
-
 -- 语言变化回调（外部同步自己的文案时使用）
 Win:OnLanguageChanged(function(v)
     print("[AsLab] language changed ->", v)
 end)
 
 -- ============================================================
--- 8. 键盘：N 键弹通知；绑定键位请在任意控件详情页用 Board-Key
+-- 9. 键盘：N 键弹通知；绑定键位请在任意控件详情页用 Board-Key
 -- ============================================================
 pcall(function()
     game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
@@ -405,8 +519,14 @@ pcall(function()
 end)
 
 -- ============================================================
--- 9. 读取上次保存的配置（必须在所有控件建好之后调用）
+-- 10. 读取配置（必须在所有控件建好之后调用）
+--     不传名字：自动读回上次使用的配置槽（active.json 里记录）
 -- ============================================================
-Win:LoadConfig()
+if Win:LoadConfig() then
+    print("[AsLab] loaded config:", Win:GetConfigName())
+else
+    Win:SaveConfig()                     -- 首次运行：把默认值落盘成 Default
+end
+syncConfigDrop()                          -- 让配置下拉与真实状态一致
 
-print("AsLab full example ready · language =", Win:GetLanguage())
+print("AsLab full example ready · language =", Win:GetLanguage(), "· config =", Win:GetConfigName())
