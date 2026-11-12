@@ -2773,7 +2773,7 @@ function Library.CreateWindow(opts)
     mainScale.Scale = 1
 
     local background = nil
-    local bgUrl, bgVideo
+    local bgUrl, bgVideo, bgDirect
     if type(Background) == "string" then
         bgUrl = Background
     elseif type(Background) == "table" then
@@ -2792,7 +2792,15 @@ function Library.CreateWindow(opts)
             background.Volume = 0
         else
             background = Instance.new("ImageLabel", main)
-            background.Image = bgUrl
+            local direct = bgUrl:match("^rbxassetid://") or bgUrl:match("^rbxasset://") or bgUrl:match("^rbxthumb://")
+            if not direct then
+                direct = bgUrl:match("^https?://www%.roblox%.com/asset") or bgUrl:match("^https?://assetdelivery")
+                if not direct then
+                    direct = bgUrl:match("^https?://www%.roblox%.com/thumbnail")
+                end
+            end
+            background.Image = direct and bgUrl or ""
+            bgDirect = direct and bgUrl or nil
             background.ScaleType = Enum.ScaleType.Crop
             background.ImageColor3 = Color3.new(1, 1, 1)
         end
@@ -3717,55 +3725,113 @@ function Library.CreateWindow(opts)
         end
     end
 
-    if background and background:IsA("ImageLabel") and type(bgUrl) == "string" and bgUrl ~= "" then
+    if background and background:IsA("ImageLabel") and type(bgUrl) == "string" and bgUrl ~= "" and not bgDirect then
         local bgPath = AssetDir .. "/background.png"
         local bgUrlPath = AssetDir .. "/background.url"
 
-        local function readText(path)
-            local ok, txt = pcall(function()
-                if type(isfile) == "function" and isfile(path) and type(readfile) == "function" then
-                    return readfile(path)
-                end
-                return nil
-            end)
-            return ok and txt or nil
+        local function safeCall(fn, ...)
+            local ok, r = pcall(fn, ...)
+            if ok then return r end
+            return nil
         end
 
-        local cachedUrl = readText(bgUrlPath)
-        local hasCache = (type(isfile) == "function") and (function()
-            local ok, r = pcall(function() return isfile(bgPath) end)
-            return ok and r
-        end)() or false
+        local function readBytes(path)
+            if type(isfile) ~= "function" or type(readfile) ~= "function" then return nil end
+            local ok, isf = pcall(isfile, path)
+            if not ok or not isf then return nil end
+            local data = safeCall(readfile, path)
+            if type(data) ~= "string" then return nil end
+            return data
+        end
 
-        if hasCache and cachedUrl == bgUrl then
-            local asset
-            pcall(function() asset = getcustomasset(bgPath) end)
+        local function toAsset(path)
+            local cands = {}
+            if type(getcustomasset) == "function" then
+                cands[#cands + 1] = path
+                local rel = path:gsub("^%./", "")
+                if rel ~= path then cands[#cands + 1] = rel end
+            end
+            for _, p in ipairs(cands) do
+                local a = safeCall(getcustomasset, p)
+                if type(a) == "string" and a ~= "" then
+                    if not (a:match("^rbxasset") or a:match("^rbxthumb") or a:match("^http")) then
+                        a = "rbxasset://" .. a
+                    end
+                    return a
+                end
+            end
+            if type(getsynasset) == "function" then
+                local a = safeCall(getsynasset, path)
+                if type(a) == "string" and a ~= "" then return a end
+            end
+            if type(getcustomasset) == "function" then
+                local a = safeCall(getcustomasset, "rbxasset://" .. path)
+                if type(a) == "string" and a ~= "" then return a end
+            end
+            return nil
+        end
+
+        local cachedData = readBytes(bgPath)
+        local cachedUrl = readBytes(bgUrlPath)
+        if type(cachedUrl) == "string" then
+            cachedUrl = cachedUrl:match("^[^\r\n]*") or ""
+            cachedUrl = cachedUrl:gsub("^%s+", ""):gsub("%s+$", "")
+        end
+        local hasCache = type(cachedData) == "string" and #cachedData >= 64
+        local linkMatches = (cachedUrl == nil) or (cachedUrl == "") or (cachedUrl == bgUrl)
+
+        local applied = false
+        if hasCache and linkMatches then
+            local asset = toAsset(bgPath)
             if asset then
                 background.Image = asset
-                revealMain()
-            else
-                hasCache = false
+                applied = true
+                if cachedUrl ~= bgUrl then
+                    safeCall(function()
+                        makefolder(RootFolder)
+                        makefolder(AssetDir)
+                        writefile(bgUrlPath, bgUrl)
+                    end)
+                end
             end
         end
 
-        if not (hasCache and cachedUrl == bgUrl) then
-            win._main.Visible = false
-            task.spawn(function()
-                local ok, data = pcall(function() return game:HttpGet(bgUrl) end)
-                if ok and type(data) == "string" and #data > 0 then
-                    pcall(function()
+        revealMain()
+
+        if not applied then
+            local function pull()
+                local data = nil
+                local ok, r = pcall(function() return game:HttpGet(bgUrl) end)
+                if ok and type(r) == "string" and #r > 0 then data = r end
+                if data then
+                    safeCall(function()
                         makefolder(RootFolder)
                         makefolder(AssetDir)
                         writefile(bgPath, data)
                         writefile(bgUrlPath, bgUrl)
                     end)
-                    local asset
-                    pcall(function() asset = getcustomasset(bgPath) end)
-                    if asset then background.Image = asset end
+                    local asset = toAsset(bgPath)
+                    if asset and background and background.Parent then
+                        background.Image = asset
+                        return
+                    end
                 end
-                revealMain()
-            end)
-            task.delay(12, revealMain)
+                if hasCache then
+                    local asset = toAsset(bgPath)
+                    if asset and background and background.Parent then
+                        background.Image = asset
+                        return
+                    end
+                end
+                if type(warn) == "function" then
+                    pcall(warn, "[AsLab] background unavailable: " .. tostring(bgUrl))
+                end
+            end
+            if type(task.defer) == "function" then
+                task.defer(function() pcall(pull) end)
+            else
+                task.delay(0, function() pcall(pull) end)
+            end
         end
     else
         revealMain()
