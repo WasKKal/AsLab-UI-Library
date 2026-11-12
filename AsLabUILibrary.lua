@@ -1058,11 +1058,12 @@ local function makeDropdown(parent, opts)
     return obj
 end
 
-local function makeRow(parent, index, title)
+local function makeRow(parent, y, title, height)
+    height = height or ROW_H
     local row = makeGlass(parent, {
         Name = "Row",
-        Size = UDim2.new(1, -s(4), 0, ROW_H),
-        Position = UDim2.new(0, s(2), 0, DETAIL_TOP + index * (ROW_H + ROW_GAP)),
+        Size = UDim2.new(1, -s(4), 0, height),
+        Position = UDim2.new(0, s(2), 0, y),
         Transparency = 0.5,
         Radius = UDim.new(0, s(9)),
         Plain = true,
@@ -1106,8 +1107,7 @@ local function updateCanvas(win)
     end
     for _, t in ipairs(win._tabs) do
         for _, c in ipairs(t._controls) do
-            local cnt = c._detailCount or 0
-            local h = PAD_IN * 2 + DETAIL_TOP + cnt * (ROW_H + ROW_GAP) + PAD_IN
+            local h = PAD_IN * 2 + (c._detailBottom or (DETAIL_TOP + 2 * (ROW_H + ROW_GAP))) + PAD_IN
             if h > need then need = h end
         end
     end
@@ -1768,7 +1768,8 @@ buildDetail = function(win, ctrl)
     layer.ClipsDescendants = false
     layer.ZIndex = ZBASE + 5
     ctrl._detailLayer = layer
-    ctrl._detailCount = 0
+    ctrl._detailY = DETAIL_TOP
+    ctrl._detailBottom = DETAIL_TOP
 
     local title = Instance.new("TextLabel", layer)
     title.Name = "DetailTitle"
@@ -1800,14 +1801,23 @@ buildDetail = function(win, ctrl)
     applyIcon(backIcon, "arrow-left")
     back.MouseButton1Click:Connect(function() closeDetail(win) end)
 
-    local krow, klabel2 = makeRow(layer, 0, "Board-Key")
+    local function pushRow(title, height)
+        height = height or ROW_H
+        local y = ctrl._detailY
+        local row, label = makeRow(layer, y, title, height)
+        ctrl._detailY = y + height + ROW_GAP
+        ctrl._detailBottom = y + height
+        return row, label
+    end
+
+    local krow, klabel2 = pushRow("Board-Key")
     i18nText(win, klabel2, "Board-Key")
     local _, klabel, khit, kconflict = makeBox(krow, s(110), KEY_PLACEHOLDER)
     ctrl._keyLabel = klabel
     ctrl._conflictLabel = kconflict
     khit.MouseButton1Click:Connect(function() startListen(win, ctrl, klabel) end)
 
-    local arow, alabel2 = makeRow(layer, 1, "AddShortcut")
+    local arow, alabel2 = pushRow("AddShortcut")
     i18nText(win, alabel2, "AddShortcut")
     local abox, alabel, ahit = makeBox(arow, s(110), "Create")
     abox.BackgroundTransparency = 0.3
@@ -1849,18 +1859,225 @@ buildDetail = function(win, ctrl)
     end)
     refreshAddState()
     ctrl._refreshAdd = refreshAddState
-    ctrl._detailCount = 2
     noteTree(layer)
     updateCanvas(win)
+end
+
+local function measureTextHeight(text, size, maxW)
+    if type(text) ~= "string" or #text == 0 then return size end
+    local lineH = size * 1.4
+    local w = maxW or 200
+    if w < 40 then w = 200 end
+    local total = 0
+    for line in (text .. "\n"):gmatch("(.-)\n") do
+        local h = size
+        local ok, sz = pcall(function()
+            return TextService:GetTextSize(line, size, Style.Font, Vector2.new(w, 100000))
+        end)
+        if ok and sz and sz.Y and sz.Y > 0 then h = sz.Y end
+        local lines = math.max(1, math.floor(h / (size * 1.2) + 0.5))
+        total = total + lines
+    end
+    if total < 1 then total = 1 end
+    return total * lineH
 end
 
 addDetailRow = function(win, ctrl, kind, opts)
     opts = opts or {}
     local layer = ctrl._detailLayer
-    local index = ctrl._detailCount
-    ctrl._detailCount = index + 1
+    local y = ctrl._detailY
+    ctrl._detailY = y + ROW_H + ROW_GAP
+    ctrl._detailBottom = y + ROW_H
     updateCanvas(win)
-    local row, rowLabel = makeRow(layer, index, opts.Title or kind)
+    if kind == "Paragraph" then
+        -- 段落控件：照抄 DynamicCow 的 SubParagraph（标题 + 说明 + 可选图标，高度随文字变化）
+        local paraW = (win._controlW or win._sizeX) - PAD_IN * 2 - s(4)
+        local title = opts.Title or ""
+        local info = opts.Info or ""
+        local icon = opts.Icon
+        local iconColor = opts.IconColor or Style.SubText
+        local backColor = opts.BackColor or Color3.fromRGB(34, 34, 42)
+
+        local pIconSize = s(18)
+        local pIconGap = s(8)
+        local pTitleSize = s(14)
+        local pTitlePad = s(2)
+        local pInfoSize = s(12)
+        local pInfoColor = Color3.fromRGB(190, 195, 200)
+        local pTextGap = s(2)
+        local pTitleDrop = s(8)
+        local pBackPad = s(8)
+        local pCorner = UDim.new(0, s(8))
+        local pBorder = 1
+        local pDarken = 0.1
+
+        local hasIco = (icon ~= nil and icon ~= "")
+        local frame = Instance.new("Frame", layer)
+        frame.Name = "SubParagraph"
+        frame.BackgroundColor3 = backColor
+        frame.BackgroundTransparency = 0.25
+        frame.BorderSizePixel = 0
+        frame.ClipsDescendants = false
+        frame.ZIndex = ZBASE + 5
+        frame:SetAttribute("_skipFade", true)
+        local fc = Instance.new("UICorner", frame)
+        fc.CornerRadius = pCorner
+        local stroke = Instance.new("UIStroke", frame)
+        stroke.Color = darkenColor(backColor, pDarken)
+        stroke.Thickness = pBorder
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        local pad = Instance.new("UIPadding", frame)
+        pad.PaddingLeft = UDim.new(0, pBackPad)
+        pad.PaddingRight = UDim.new(0, pBackPad)
+        local hl = Instance.new("UIListLayout", frame)
+        hl.FillDirection = Enum.FillDirection.Horizontal
+        hl.HorizontalAlignment = Enum.HorizontalAlignment.Left
+        hl.VerticalAlignment = Enum.VerticalAlignment.Center
+        hl.SortOrder = Enum.SortOrder.LayoutOrder
+        hl.Padding = UDim.new(0, pIconGap)
+
+        local function infoAvailW()
+            local w = paraW - pBackPad * 2
+            if hasIco then w = w - (pIconSize + pIconGap) end
+            return math.max(40, w)
+        end
+        local function computeH()
+            local titleH = pTitleSize + pTitlePad
+            local infoH = measureTextHeight(info, pInfoSize, infoAvailW())
+            local h = math.ceil(pTitleDrop + titleH + pTextGap + infoH + s(8))
+            if h < s(48) then h = s(48) end
+            return h
+        end
+
+        local icLbl = nil
+        if hasIco then
+            icLbl = Instance.new("ImageLabel", frame)
+            icLbl.Name = "ParaIcon"
+            icLbl.Size = UDim2.fromOffset(pIconSize, pIconSize)
+            icLbl.BackgroundTransparency = 1
+            icLbl.ImageColor3 = iconColor
+            icLbl.ScaleType = Enum.ScaleType.Fit
+            icLbl.LayoutOrder = 1
+            icLbl.ZIndex = ZBASE + 6
+            icLbl:SetAttribute("_skipFade", true)
+            applyIcon(icLbl, icon, iconColor)
+        end
+
+        local txt = Instance.new("Frame", frame)
+        txt.Name = "ParaText"
+        txt.BackgroundTransparency = 1
+        txt.Size = UDim2.new(1, hasIco and -(pIconSize + pIconGap) or 0, 1, 0)
+        txt.LayoutOrder = 2
+        txt.ZIndex = ZBASE + 6
+        txt:SetAttribute("_skipFade", true)
+        local vl = Instance.new("UIListLayout", txt)
+        vl.FillDirection = Enum.FillDirection.Vertical
+        vl.HorizontalAlignment = Enum.HorizontalAlignment.Left
+        vl.VerticalAlignment = Enum.VerticalAlignment.Top
+        vl.SortOrder = Enum.SortOrder.LayoutOrder
+        vl.Padding = UDim.new(0, pTextGap)
+        local txtPad = Instance.new("UIPadding", txt)
+        txtPad.PaddingTop = UDim.new(0, pTitleDrop)
+        local titleLbl = Instance.new("TextLabel", txt)
+        titleLbl.Name = "ParaTitle"
+        titleLbl.BackgroundTransparency = 1
+        titleLbl.Size = UDim2.new(1, 0, 0, pTitleSize + pTitlePad)
+        titleLbl.Text = title
+        titleLbl.TextColor3 = Style.Text
+        titleLbl.TextSize = pTitleSize
+        titleLbl.Font = Style.Font
+        titleLbl.RichText = true
+        titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+        titleLbl.TextYAlignment = Enum.TextYAlignment.Center
+        titleLbl.LayoutOrder = 1
+        titleLbl.ZIndex = ZBASE + 7
+        titleLbl:SetAttribute("_skipFade", true)
+        local infoLbl = Instance.new("TextLabel", txt)
+        infoLbl.Name = "ParaInfo"
+        infoLbl.BackgroundTransparency = 1
+        infoLbl.Size = UDim2.new(1, 0, 0, measureTextHeight(info, pInfoSize, infoAvailW()))
+        infoLbl.Text = info
+        infoLbl.TextColor3 = pInfoColor
+        infoLbl.TextSize = pInfoSize
+        infoLbl.Font = Style.Font
+        infoLbl.RichText = true
+        infoLbl.TextWrapped = true
+        infoLbl.TextXAlignment = Enum.TextXAlignment.Left
+        infoLbl.TextYAlignment = Enum.TextYAlignment.Center
+        infoLbl.LayoutOrder = 2
+        infoLbl.ZIndex = ZBASE + 7
+        infoLbl:SetAttribute("_skipFade", true)
+
+        local height = computeH()
+        frame.Size = UDim2.new(1, -s(4), 0, height)
+        frame.Position = UDim2.new(0, s(2), 0, y)
+        ctrl._detailY = y + height + ROW_GAP
+        ctrl._detailBottom = y + height
+        noteTree(frame)
+        updateCanvas(win)
+
+        local obj = {}
+        function obj:SetTitle(v)
+            title = v and tostring(v) or ""
+            titleLbl.Text = title
+        end
+        function obj:GetTitle() return title end
+        function obj:SetInfo(v)
+            info = v and tostring(v) or ""
+            infoLbl.Text = info
+            local ih = measureTextHeight(info, pInfoSize, infoAvailW())
+            infoLbl.Size = UDim2.new(1, 0, 0, ih)
+            local newH = computeH()
+            frame.Size = UDim2.new(1, -s(4), 0, newH)
+            ctrl._detailY = y + newH + ROW_GAP
+            ctrl._detailBottom = y + newH
+            updateCanvas(win)
+        end
+        function obj:GetInfo() return info end
+        function obj:SetIcon(v)
+            local want = (type(v) == "string" and v ~= "") and v or nil
+            hasIco = (want ~= nil)
+            if want then
+                if not icLbl or not icLbl.Parent then
+                    icLbl = Instance.new("ImageLabel", frame)
+                    icLbl.Name = "ParaIcon"
+                    icLbl.Size = UDim2.fromOffset(pIconSize, pIconSize)
+                    icLbl.BackgroundTransparency = 1
+                    icLbl.ImageColor3 = iconColor
+                    icLbl.ScaleType = Enum.ScaleType.Fit
+                    icLbl.LayoutOrder = 1
+                    icLbl.ZIndex = ZBASE + 6
+                    icLbl:SetAttribute("_skipFade", true)
+                end
+                applyIcon(icLbl, want, iconColor)
+                icLbl.Visible = true
+            elseif icLbl and icLbl.Parent then
+                icLbl.Visible = false
+            end
+            txt.Size = UDim2.new(1, hasIco and -(pIconSize + pIconGap) or 0, 1, 0)
+            local newH = computeH()
+            frame.Size = UDim2.new(1, -s(4), 0, newH)
+            ctrl._detailY = y + newH + ROW_GAP
+            ctrl._detailBottom = y + newH
+            updateCanvas(win)
+        end
+        function obj:SetIconColor(v)
+            if typeof(v) == "Color3" then
+                iconColor = v
+                if icLbl and icLbl.Parent then icLbl.ImageColor3 = v end
+            end
+        end
+        function obj:SetBackColor(v)
+            if typeof(v) == "Color3" then
+                backColor = v
+                frame.BackgroundColor3 = v
+                stroke.Color = darkenColor(v, pDarken)
+            end
+        end
+        return obj
+    end
+
+    local row, rowLabel = makeRow(layer, y, opts.Title or kind)
     i18nText(win, rowLabel, opts.Title or kind)
 
     if kind == "Slider" then
@@ -2621,6 +2838,7 @@ local function addControl(tab, kind, opts)
     function ctrl:AddButton(o) return own(addDetailRow(tab._win, ctrl, "Button", o)) end
     function ctrl:AddColorPicker(o) return own(addDetailRow(tab._win, ctrl, "ColorPicker", o)) end
     function ctrl:AddDropdown(o) return own(addDetailRow(tab._win, ctrl, "Dropdown", o)) end
+    function ctrl:AddParagraph(o) return own(addDetailRow(tab._win, ctrl, "Paragraph", o)) end
 
     table.insert(tab._controls, ctrl)
     noteTree(block)
