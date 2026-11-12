@@ -1089,7 +1089,13 @@ destroyShortcut = function(win, ctrl)
         if item == sc then table.remove(win._shortcuts, i) break end
     end
     ctrl._shortcut = nil
-    if sc.frame and sc.frame.Parent then sc.frame:Destroy() end
+    local frame = sc.frame
+    if frame and frame.Parent then
+        -- 先淡出再销毁，避免 Shortcut 文本（浮动药丸）瞬时消失而无渐隐动画
+        fadeGroup(frame, 1, function()
+            if frame and frame.Parent then frame:Destroy() end
+        end)
+    end
 end
 
 startListen = function(win, ctrl, label)
@@ -2930,6 +2936,9 @@ function Library.CreateWindow(opts)
     })
     panel.ZIndex = ZBASE + 52
     panel.ClipsDescendants = false
+    -- 子选项 Settings 面板默认隐藏：仅在点击 monitor-cog 时显示，
+    -- 避免 Ui 刚加载时就出现且无法关闭。
+    panel.Visible = false
 
     local titleLbl = Instance.new("TextLabel", panel)
     titleLbl.Name = "SettingsTitle"
@@ -3120,6 +3129,7 @@ function Library.CreateWindow(opts)
         win._settingsOpen = false
         preview.Visible = false
         overlay.Visible = false
+        panel.Visible = false
         if langDropdown and langDropdown._closeMenu then pcall(langDropdown._closeMenu) end
     end
     win._closeSettings = closeSettings
@@ -3132,6 +3142,7 @@ function Library.CreateWindow(opts)
         refreshScaleSlider()
         langDropdown:Set(settingsLanguage)
         overlay.Visible = true
+        panel.Visible = true
         preview.Visible = false
     end
     win._openSettings = openSettings
