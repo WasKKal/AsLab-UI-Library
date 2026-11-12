@@ -7,8 +7,10 @@
       多配置：SaveConfig(name) / LoadConfig(name) / GetConfigs / GetConfigName / GetConfigPath
               SetConfig / RenameConfig / DeleteConfig / ConfigExists
       Tab:AddToggle / AddButton
-      Ctrl:AddSlider / AddToggle / AddButton / AddColorPicker / AddDropdown
+      Ctrl:AddSlider / AddToggle / AddButton / AddColorPicker / AddDropdown / AddParagraph
       Ctrl:Set / SetValue，Dropdown:Get / GetOptions / SetOptions / AddOption / RemoveOption
+      Slider 值可动态改变：子滑块对象 .Set / .SetValue
+      Paragraph:SetTitle / SetInfo / SetIcon / SetIconColor / SetBackColor / GetTitle / GetInfo
       详情页内置：Board-Key（按键绑定）、AddShortcut（快捷图标创建 / 拖动 / 删除）
       配置持久化 ConfigKey、窗口设置（比例 / 语言）、关闭二次确认、通知胶囊
     说明：动态 Dropdown 与多配置 API 需要 AsLabUILibrary 2026-11 之后的版本。
@@ -178,9 +180,24 @@ Boost:AddButton({
     Title = "Reset Speed",
     Callback = function()
         boostSpeed, jumpPower = 50, 50
-        BoostSpeed:SetValue(50)          -- 子控件 SetValue
+        BoostSpeed:SetValue(50)          -- 子控件 SetValue（Slider 值可动态改变）
         print("[AsLab] boost reset")
     end,
+})
+
+-- 段落控件（照抄 DynamicCow 的 SubParagraph）：Title + Info + 可选 Icon，高度随文字自动变化。
+-- AddParagraph 返回对象支持：SetTitle / SetInfo / SetIcon / SetIconColor / SetBackColor / GetTitle / GetInfo
+local Notes = TabGeneral:AddToggle({ Title = "Notes", Icon = "info", Default = false })
+local NotePara
+Notes:AddButton({ Title = "Update Note", Callback = function()
+    -- 动态替换段落文本，控件会重新测量高度并回流排版
+    NotePara:SetInfo("这是通过 Paragraph:SetInfo 动态更新的说明文本 —— 段落控件支持运行时替换文字，并自动重新计算高度与排版。")
+    Win:ShowNotify({ Title = "Paragraph", Info = "SetInfo() 已更新", Time = 2 })
+end })
+NotePara = Notes:AddParagraph({
+    Title = "提示",
+    Info = "长按主开关打开详情页：可在此绑定快捷键、调整子滑块与开关，并查看本说明段落。段落高度会随文字长度自动变化。",
+    Icon = "info",
 })
 
 TabGeneral:AddToggle({ Title = "Auto Save", Icon = "save", Default = true, ConfigKey = "auto_save" })
