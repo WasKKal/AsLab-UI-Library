@@ -9,10 +9,6 @@ Library.__index = Library
 local SCALE = 0.85
 local function s(n) return n * SCALE end
 
--- 统一层级基值：历史显式 ZIndex 基数为 10000，本轮按要求再统一 +100000
--- → 110000。ZIndex 只在同一个 ScreenGui 内排序，跨 GUI 的层级靠 DisplayOrder；
--- 这里保留窗口内部原有的相对顺序（背景 0 < 默认 1 < 显式 110001..110060），
--- 避免把垫底的背景抬到内容之上（那样会整片盖住标题/选项卡/控件）。
 local ZBASE = 110000
 
 local Style = {
@@ -32,7 +28,6 @@ local Style = {
     BlockStroke = Color3.fromRGB(180, 186, 200),
     BlockStrokeTransparency = 0.35,
     BlockStrokeThickness = 1.4,
-    -- Slider（照抄 DynamicCow）
     SliderFill = Color3.fromRGB(120, 160, 255),
     SliderFillDarken = 0.28,
     SliderTrack = Color3.fromRGB(58, 58, 70),
@@ -71,8 +66,6 @@ local Cfg = {
     TabTextSize = 15,
     TabTextGap = 8,
     TabRowPadX = 6,
-    -- 选中态：纯白文字/图标 + 蓝调高亮块 + 亮描边，避免真机 UIGradient 失效时
-    -- 深色背景与黑字黑图标糊在一起（"重叠导致不明显"）
     TabActiveColor = Color3.fromRGB(255, 255, 255),
     TabInactiveColor = Color3.fromRGB(150, 156, 172),
     TabColorFadeTime = 0.22,
@@ -101,7 +94,6 @@ local HOLD_TIME    = 0.45
 local FOOTER_H     = s(38)
 local ORB          = s(52)
 local TITLE_ICON   = s(28)
--- 收起时 orb 应停在主面板标题图标中心，而非窗口左上角
 local TITLE_ICON_DX = HEADER_PAD + TITLE_ICON / 2 - ORB / 2
 local TITLE_ICON_DY = HEADER_H / 2 - ORB / 2
 local COLLAPSE_T   = 0.38
@@ -186,10 +178,6 @@ function Library.PreloadLucide()
     return loadLucide() ~= nil
 end
 
--- holder 必须优先使用执行器提供的隐藏 GUI 容器 gethui()：
--- 挂在它下面的 ScreenGui 不会被游戏自带 UI 覆盖，也不会随角色重生被清掉，
--- 且 ZIndex/DisplayOrder 抬到 ZBASE 后才能真正压住外部 UI。
--- 只有在确实没有 gethui()（Studio / 普通 Roblox）时才回退 CoreGui / PlayerGui。
 local HolderSource = "none"
 local function getHolder()
     local function attempt(fn)
@@ -201,7 +189,6 @@ local function getHolder()
         if type(gethui) == "function" then return gethui() end
     end)
     if h then HolderSource = "gethui" return h end
-    -- 少数执行器把同一容器暴露为 get_hidden_gui
     h = attempt(function()
         if type(get_hidden_gui) == "function" then return get_hidden_gui() end
     end)
@@ -214,10 +201,6 @@ local function getHolder()
 end
 function Library.GetHolderSource() return HolderSource end
 
--- 统一的指针坐标源：真机 / 执行器里 InputObject.Position 才是本次输入的真实
--- 屏幕坐标；GetMouseLocation() 在部分执行器（含模拟环境）会返回 (0,0) 或带
--- GuiInset 偏移。混用两者会让「按下瞬间」与「移动过程」用不同的原点，表现为
--- 拖动、收起时窗口/悬浮球突然向上跳一下。这里优先取 InputObject.Position。
 local function inputPoint(i)
     local p = i and i.Position
     if p and p.X ~= nil and p.Y ~= nil then return p.X, p.Y end
@@ -226,11 +209,6 @@ local function inputPoint(i)
     return 0, 0
 end
 
--- ===========================================================================
--- ConfigKey：把控件状态按 ConfigKey 保存到窗口对应 folder 的 ValueBase 中
--- （DynamicCow 风格：配置以实例形式落在 AsLab/<Folder>/Config 文件夹里，
---  同时序列化为同目录的 config.json）
--- ===========================================================================
 local function makeConfigValue(win, key, kind)
     local folder = win and win._configFolder
     if not (folder and key and key ~= "") then return nil end
@@ -262,9 +240,6 @@ end
 
 local HttpService = game:GetService("HttpService")
 
--- 不同环境把 HttpService 的 JSON 方法暴露成两种形式：真机是「方法」(需 self)，
--- 部分执行器 / 无头模拟是「普通函数」(第一个参数就是值)。用一次性探测选定
--- 调用形式，避免把 HttpService 自身误编码进 config.json。
 local jsonEncodeValue, jsonDecodeRaw
 do
     local probe = "__aslab_probe__"
@@ -282,7 +257,6 @@ do
     end
 end
 
--- Color3 无法直接 JSONEncode，用带标记的表承载，读回时还原
 local function cfgToJSON(v)
     if typeof(v) == "Color3" then
         return { __aslab_color3 = { r = v.R, g = v.G, b = v.B } }
@@ -299,11 +273,9 @@ local function jsonToCfg(v)
 end
 
 function Library:SaveConfig()
-    -- 1) ValueBase 镜像（DynamicCow 风格，便于运行时其它脚本读取）
     for _, ctrl in pairs(self._config or {}) do
         if ctrl then syncConfigValue(ctrl) end
     end
-    -- 2) config.json：落在 AsLab/<Folder>/config.json，跨会话真正持久化
     local path = self._configPath
     if path then
         pcall(function()
@@ -320,7 +292,6 @@ function Library:SaveConfig()
 end
 
 function Library:LoadConfig()
-    -- 优先读 config.json；文件不存在或解析失败时回退到 ValueBase 实例
     local path = self._configPath
     local jsonData = nil
     if path then
@@ -466,9 +437,6 @@ end
 local function makeRow(parent, index, title)
     local row = makeGlass(parent, {
         Name = "Row",
-        -- 左右各留 2px 安全边距：真机中 UIStroke / 圆角 / 像素舍入会向外扩约 1px，
-        -- 若行控件严格贴满容器（旧写法 Scale=1, offset=0），两端会被祖先
-        -- ClipsDescendants 与 ScrollingFrame 滚动条占位裁掉「微微一条」。
         Size = UDim2.new(1, -s(4), 0, ROW_H),
         Position = UDim2.new(0, s(2), 0, DETAIL_TOP + index * (ROW_H + ROW_GAP)),
         Transparency = 0.5,
@@ -521,10 +489,6 @@ local function updateCanvas(win)
     end
     local w = math.max(1, math.ceil(win._controlW or 0))
     local h = math.max(1, math.ceil(need))
-    -- 真机 ScrollingFrame 中，子对象的 UDim2.Scale 相对 AbsoluteCanvasSize 解析，
-    -- 且垂直滚动条会占右侧 ScrollBarThickness。旧写法把 CanvasSize.X 留成 0，
-    -- 部分执行器会把水平基准解析为 0 / 或按窗口宽度裁掉贴边子控件的左右几像素，
-    -- 表现为「子选项控件左右边缘被微微裁剪」。这里显式把 canvas 宽度设为控件区宽度。
     sc.CanvasSize = UDim2.fromOffset(w, h)
     local innerW = math.max(1, w - PAD_IN * 2)
     local innerH = math.max(1, h - PAD_IN * 2)
@@ -536,12 +500,6 @@ local function updateCanvas(win)
     end
 end
 
--- ============================================================================
--- GroupTransparency 兼容层
--- 真实执行器（尤其移动端）对 CanvasGroup 的「渲染到纹理」支持不完整，
--- 会导致整棵子树显示为灰色/空白。本库改用 Frame 承载玻璃容器，
--- 并用软件方式模拟 GroupTransparency（按合成公式 1-(1-base)*(1-t) 递归重算子树透明度）。
--- ============================================================================
 local groupState = setmetatable({}, { __mode = "k" })
 
 local function setGroupTransparency(container, t)
@@ -564,10 +522,6 @@ local function setGroupTransparency(container, t)
     end
     collect(container)
     for _, node in ipairs(nodes) do
-        -- _skipFade：按压叠层 / 选中块 / 冲突提示 / 悬浮球信息等动态覆盖层
-        -- 不参与 GroupTransparency 快照。否则 openDetail 淡出时会把「正在过渡中的
-        -- 按压透明度(0.18)」记成常态基准，closeDetail 淡入又恢复成该值 ——
-        -- 返回主页面后控件被永久固化成按压变暗态。
         local skip = false
         pcall(function() skip = (node:GetAttribute("_skipFade") == true) end)
         if not skip then
@@ -685,10 +639,6 @@ local function setPressed(ctrl, on)
     ctrl._pressTween:Play()
 end
 
--- 立即、无动画地复位按压态。进入/退出子选项页时必须调用：
---  · Cancel 正在运行的 Tween，否则 Tween 会在后续帧把属性写回；
---  · 不把「过渡中的 0.18」留给 GroupTransparency 当常态基准。
--- 真机上 MouseButton1Up / MouseLeave 在页面切换时可能丢失，需显式兜底。
 local function releasePress(ctrl)
     if not ctrl then return end
     ctrl._pressed = false
@@ -872,7 +822,6 @@ createShortcut = function(win, ctrl)
         if moveConn then pcall(function() moveConn:Disconnect() end) moveConn = nil end
         if endConn then pcall(function() endConn:Disconnect() end) endConn = nil end
         if sc and sc.Parent then
-            -- 按压反馈：所有控件类型的快捷按钮统一做缩放回弹 + 暗色叠层淡出过渡
             pcall(function()
                 TweenService:Create(uscale, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
                 TweenService:Create(press, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
@@ -880,7 +829,6 @@ createShortcut = function(win, ctrl)
         end
         if fire and not moved then fireClick(ctrl) end
     end
-    -- 记录本次按下对应的 InputObject，供 MouseButton1Down 取真实坐标
     local dragStartInput = nil
     hit.InputBegan:Connect(function(input)
         local t = input.UserInputType
@@ -895,7 +843,6 @@ createShortcut = function(win, ctrl)
         startX, startY = inputPoint(dragStartInput)
         dragStartInput = nil
         originX, originY = sc.Position.X.Offset, sc.Position.Y.Offset
-        -- 按压反馈：所有快捷按钮统一执行缩放 + 暗色叠层淡入过渡动画
         TweenService:Create(uscale, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 }):Play()
         TweenService:Create(press, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.25 }):Play()
         moveConn = UserInputService.InputChanged:Connect(function(i)
@@ -1014,9 +961,8 @@ addDetailRow = function(win, ctrl, kind, opts)
         local minV = opts.Min or 0
         local maxV = opts.Max or 100
         local def = opts.Default or minV
-        local step = opts.Step or 0  -- Degree 步进吸附（0 表示无）
+        local step = opts.Step or 0
 
-        -- 值标签（标题沿用 row 自带左侧标题，值居于轨道左侧，轨道占右侧剩余宽度）
         local valLabel = Instance.new("TextLabel", row)
         valLabel.Name = "SliderValue"
         valLabel.Size = UDim2.new(0, s(40), 1, 0)
@@ -1036,9 +982,6 @@ addDetailRow = function(win, ctrl, kind, opts)
         track.BackgroundColor3 = Style.SliderTrack
         track.BackgroundTransparency = Style.SliderTrackTransparency
         track.BorderSizePixel = 0
-        -- 不能裁剪：圆形拖块（s(16)）高于轨道（s(6)），真机里 ClipsDescendants
-        -- 会把拖块上下各切掉约 4px，只剩一条横条。fill 自带 UICorner 且宽度
-        -- 恒 <= 轨道宽度，关闭裁剪后仍不会溢出，圆角由自身 UICorner 保证。
         track.ClipsDescendants = false
         track.Active = true
         local tc = Instance.new("UICorner", track)
@@ -1068,7 +1011,6 @@ addDetailRow = function(win, ctrl, kind, opts)
         thc.CornerRadius = UDim.new(1, 0)
 
         local value = def
-        -- tween 引用保存在普通 Lua 闭包变量中（真实 Roblox 不允许给 Instance 挂自定义成员）
         local fillTween = nil
         local function clampFrac(f)
             if f < 0 then f = 0 elseif f > 1 then f = 1 end
@@ -1366,9 +1308,6 @@ addDetailRow = function(win, ctrl, kind, opts)
                 math.floor(c.G * 255 + 0.5),
                 math.floor(c.B * 255 + 0.5))
         end
-        -- obj 必须先声明再被 refresh 闭包捕获：旧写法把 local obj 放在 refresh
-        -- 之后，闭包里引用的是全局 obj(nil)，导致取色后 _configCurrent 不更新，
-        -- SaveConfig 写进 config.json 的仍是默认色。
         local obj
         local function refresh(fire)
             local c = Color3.fromHSV(h, sat, val)
@@ -1383,10 +1322,6 @@ addDetailRow = function(win, ctrl, kind, opts)
             if fire and opts.Callback then pcall(opts.Callback, c) end
             if obj and obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
         end
-        -- 触摸 / 鼠标统一取 InputObject.Position：旧实现「按下」时用
-        -- GetMouseLocation()（部分执行器恒返回 (0,0) 或带 GuiInset 偏移），
-        -- 「移动」时用 i.Position，两个坐标源不一致 → 触摸位置整体偏移。
-        -- 同时补上 Touch 分支，触屏拖动与抬手才能正确跟随 / 释放。
         local function grab(apply, initial)
             local px, py = inputPoint(initial)
             apply(px, py)
@@ -1443,7 +1378,6 @@ addDetailRow = function(win, ctrl, kind, opts)
             grab(setHue, input)
         end)
 
-        -- 触发块登记：展开后点击「面板 + 触发块」之外时自动收起
         win._colorTriggers = win._colorTriggers or {}
         table.insert(win._colorTriggers, hit)
         hit.MouseButton1Click:Connect(function()
@@ -1479,10 +1413,6 @@ end
 
 openDetail = function(win, ctrl)
     if win._detail then return end
-    -- 长按进入子选项前，立即复位所有控件的按压态：
-    -- 此时 setPressed(false) 的 0.28s 过渡 Tween 仍在跑，press 叠层约 0.18，
-    -- 若直接 fadeGroup(cont,1)，会把这个中间值记进 GroupTransparency 常态快照，
-    -- 返回主页面后控件永久变暗。必须在任何淡出快照之前硬性释放。
     releaseAllPress(win)
     for _, p in ipairs(win._colorPanels or {}) do p.Visible = false end
     if win._listening then
@@ -1514,8 +1444,6 @@ closeDetail = function(win)
     local ctrl = win._detail
     if not ctrl then return end
     win._detail = nil
-    -- 返回主页面前再次兜底：真机 MouseButton1Up / MouseLeave 在页面切换时可能丢失，
-    -- 且 setGroupTransparency(cont,1) 会做一次全量快照，须确保此刻按压态已干净。
     releaseAllPress(win)
     if win._listening then
         win._listening.label.Text = KEY_PLACEHOLDER
@@ -1845,9 +1773,6 @@ applyOrbLayout = function(win)
     local px = baseX - ext * blend
     orb.Size = UDim2.fromOffset(ORB + ext, ORB)
     orb.Position = UDim2.fromOffset(px, baseY)
-    -- 图标锚点 (0.5,0.5)：圆心 = 圆形端中心。
-    -- orb 宽 = ORB + ext，左边缘 px = baseX - ext*blend；
-    -- 圆形端圆心相对 orb 左边缘 = ORB/2 + ext*blend，纵向恒为 ORB/2。
     win._orbIcon.Position = UDim2.fromOffset(ORB / 2 + ext * blend, ORB / 2)
     win._orbInfo.Size = UDim2.fromOffset(ext, ORB)
     win._orbInfo.Position = UDim2.fromOffset(ORB * (1 - blend), 0)
@@ -1938,10 +1863,6 @@ syncOrbBase = function(win)
     if win._orbDragging then return end
     if win._collapsed then return end
     pcall(function()
-        -- 与拖动 / 收起共用同一套「Position 纯 offset」坐标系。
-        -- 旧实现读 main.AbsolutePosition（含 GuiInset 与 UIScale 补偿），
-        -- 与 orb.Position 的 offset 语义不同，revealMain 时会把悬浮球基准
-        -- 悄悄上移，收起动画结束就出现「向上闪现」。
         local p = win._main.Position
         if p then
             win._orbBaseX = p.X.Offset + TITLE_ICON_DX
@@ -2163,8 +2084,6 @@ local function cancelAnim(win)
     end
 end
 
--- 仿 WasUIPro MinimizeToDots：收起时隐藏窗口内部 GuiObject 内容，
--- 只保留 main 自身的边框（渐变 / UIStroke / UICorner 不是 GuiObject，不受影响）。
 local function setMainContentVisible(win, show)
     local main = win._main
     if not main then return end
@@ -2196,29 +2115,16 @@ local function collapse(win)
     win._panelAnimating = true
     win:_finishFadeIn()
     cancelAnim(win)
-    -- 快捷按钮常驻：收起窗口不再隐藏快捷按钮
 
     local main = win._main
-    -- 用 main 自身的 Position（纯 offset）作为收拢基准，不用 AbsolutePosition：
-    -- 后者含 GuiInset / UIScale 补偿，与 orb.Position 的 offset 不是同一坐标系，
-    -- 会让收拢终点（也就是悬浮球最终位置）比预期高出一段 → 收起时向上闪现。
     local ax, ay = main.Position.X.Offset, main.Position.Y.Offset
 
-    -- 仿 WasUIPro MinimizeToDots：主窗口「边框自身」用 Size/Position 直接收缩，
-    -- 不再用 UIScale 把整个窗口连内容一起缩放（那样内容会挤压变形）。
-    -- WasUIPro 的收拢结束点是窗口左上角顶点（Position 固定）；
-    -- 我们把结束点改成「标题图标」：收拢后的 ORB 正圆正好以主 Icon 为中心，
-    -- 圆心 = 原左上角 + (HEADER_PAD + TITLE_ICON/2, HEADER_H/2)，
-    -- 即圆左上角偏移 (TITLE_ICON_DX, TITLE_ICON_DY)。
     local endX = ax + TITLE_ICON_DX
     local endY = ay + TITLE_ICON_DY
-    -- 归一化当前位置为纯 offset（视觉不变），保证两端都是 offset 的 tween 平滑
     main.Position = UDim2.fromOffset(ax, ay)
-    -- 用创建时的固定窗口尺寸记录展开几何（不受动画中途打断影响）
     win._mainPosBeforeCollapse = UDim2.fromOffset(ax, ay)
     win._mainSizeBeforeCollapse = UDim2.fromOffset(win._sizeX, win._sizeY)
 
-    -- 悬浮球基准同步到「图标结束点」，并复位为纯圆（图标已 AnchorPoint 居中）
     win._orbBaseX, win._orbBaseY = endX, endY
     local vw = viewport()
     win._orbSide = (endX + ORB / 2 < vw / 2) and "left" or "right"
@@ -2226,7 +2132,6 @@ local function collapse(win)
     win._orbBlend.Value = (win._orbSide == "left") and 0 or 1
     applyOrbLayout(win)
 
-    -- 收拢全程不再用 UIScale，锁定为 1，保证 Size tween 精确（不被二次缩放）
     if win._mainScale then win._mainScale.Scale = 1 end
     local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
     win._mainTween = TweenService:Create(main, ti, {
@@ -2239,11 +2144,8 @@ local function collapse(win)
             { CornerRadius = UDim.new(0, ORB / 2) })
         win._cornerTween:Play()
     end
-    -- 隐藏内部内容，只留边框在收缩（WasUIPro 同款做法）
     setMainContentVisible(win, false)
 
-    -- 收拢后期：与收成圆的边框同心同尺寸的悬浮球淡入，圆中心带 Icon，
-    -- 边框收拢到位后无缝合一（不是"消失后另建一个球"）。
     win._orb.Visible = true
     setGroupTransparency(win._orb, 1)
     win._orbTween = tweenGroup(win._orb, 0,
@@ -2275,8 +2177,6 @@ local function expand(win)
     cancelAnim(win)
     win._main.Visible = true
     win._orb.Visible = false
-    -- 对称还原：边框自身从 ORB 正圆展开回原窗口 Size/Position/Corner，
-    -- 同时恢复被隐藏的内部内容（仿 WasUIPro RestoreFromDots）。
     if win._mainScale then win._mainScale.Scale = 1 end
     setMainContentVisible(win, true)
     local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -2309,10 +2209,6 @@ function Library.CreateWindow(opts)
     local holder = getHolder()
     if not holder then return nil end
 
-    -- Folder 签名（DynamicCow 风格）：AsLab 是固定的根目录，
-    -- opts.Folder 是「创建在 AsLab 下」的子文件夹名。背景图与 config.json
-    -- 都落在该子文件夹中：AsLab/<Folder>/background.png、AsLab/<Folder>/config.json。
-    -- 同名 Roblox Folder 层级 AsLab/<Folder>/Config 用于承载配置 ValueBase 镜像。
     local RootFolder = "AsLab"
     local SubFolder = "Default"
     if type(opts.Folder) == "string" and opts.Folder ~= "" then
@@ -2336,14 +2232,8 @@ function Library.CreateWindow(opts)
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    -- 跨 ScreenGui 的层级由 DisplayOrder 决定，ZIndex 仅在本 GUI 内有效；
-    -- DisplayOrder 统一 +100000，确保挂在 gethui() 隐藏容器里也不会被外部 UI 压住。
     gui.DisplayOrder = 100000
 
-    -- main 一律用「纯 offset」定位：拖动、收起、悬浮球基准都以
-    -- Position.X/Y.Offset 为唯一坐标系。旧写法 UDim2.new(0.5, -W/2, 0.5, -H/2)
-    -- 是 scale+offset 混合，拖动时一旦用 AbsolutePosition 反推就会与 offset
-    -- 语义错位（真机表现为窗口/悬浮球向上闪现）。
     local vw0, vh0 = viewport()
     local initW = Size.X.Offset + (Size.X.Scale or 0) * vw0
     local initH = Size.Y.Offset + (Size.Y.Scale or 0) * vh0
@@ -2360,13 +2250,11 @@ function Library.CreateWindow(opts)
         Highlight = 0.82,
     })
     main.AnchorPoint = Vector2.new(0, 0)
-    -- main 为 Frame，无 GroupTransparency（始终可见）
     main.ZIndex = ZBASE + 1
-    main.ClipsDescendants = true  -- 裁切到窗口圆角，背景图随窗口圆角
+    main.ClipsDescendants = true
     local mainScale = Instance.new("UIScale", main)
     mainScale.Scale = 1
 
-    -- 背景：先建占位，图片下载到本地对应 folder 后再加载（见下方下载与 gate 逻辑）
     local background = nil
     local bgUrl, bgVideo
     if type(Background) == "string" then
@@ -2396,9 +2284,6 @@ function Library.CreateWindow(opts)
         background.Position = UDim2.fromOffset(0, 0)
         background.BackgroundTransparency = 1
         background.BorderSizePixel = 0
-        -- 背景必须垫在窗口所有内容之下：ZIndexBehavior=Sibling 下同一父级按
-        -- ZIndex 排序，内部内容多为默认 z=1，若背景沿用 10000 会整片盖住
-        -- 标题 / 选项卡 / 控件（只剩 footer 可见）。设为 0 恒定最底层。
         background.ZIndex = 0
         background.ClipsDescendants = true
         local bcorner = Instance.new("UICorner", background)
@@ -2567,8 +2452,6 @@ function Library.CreateWindow(opts)
         NumberSequenceKeypoint.new(0.5, 0.97),
         NumberSequenceKeypoint.new(1, 1),
     })
-    -- 图标用 AnchorPoint(0.5,0.5) 锚定，Position 恒为「圆形端圆心」，
-    -- 从结构上保证图标绝对居中，不依赖硬编码的 fromOffset 偏移。
     local orbIcon = Instance.new("ImageLabel", orb)
     orbIcon.Name = "OrbIcon"
     orbIcon.Size = UDim2.fromOffset(ORB * 0.56, ORB * 0.56)
@@ -2671,7 +2554,6 @@ function Library.CreateWindow(opts)
     closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
     minBtn.MouseButton1Click:Connect(function() collapse(win) end)
 
-    -- 按住标题栏拖动整个窗口
     local winDrag, winMoved, wsx, wsy, wox, woy
     local winMoveConn, winEndConn
     local function stopWinDrag()
@@ -2687,9 +2569,6 @@ function Library.CreateWindow(opts)
         if winDrag then stopWinDrag() end
         winDrag = true
         winMoved = false
-        -- 起点用本次输入的 Position；原点用 main 自身的 Position（纯 offset）。
-        -- 旧实现用 GetMouseLocation() + AbsolutePosition，两者在真机差一个
-        -- GuiInset / UIScale 补偿，第一次移动就会把窗口瞬移（向上闪现）。
         wsx, wsy = inputPoint(input)
         wox, woy = win._main.Position.X.Offset, win._main.Position.Y.Offset
         winMoveConn = UserInputService.InputChanged:Connect(function(i)
@@ -2729,7 +2608,6 @@ function Library.CreateWindow(opts)
         orbMoved = false
         orbStartX, orbStartY = inputPoint(input)
         orbOriginX, orbOriginY = win._orbBaseX, win._orbBaseY
-        -- 拖拽开始先收掉残留的扩展/混合补间并吸附到收起基准位，避免起点抖动
         if win._orbExtTween then pcall(function() win._orbExtTween:Cancel() end) win._orbExtTween = nil end
         if win._orbBlendTween then pcall(function() win._orbBlendTween:Cancel() end) win._orbBlendTween = nil end
         win._orbExt.Value = 0
@@ -2759,23 +2637,16 @@ function Library.CreateWindow(opts)
             end
         end)
     end
-    -- InputBegan 能拿到本次输入的真实坐标（真机 / 触屏 / 模拟环境都可靠），
-    -- 不再依赖 GetMouseLocation()（部分执行器恒返回 0,0 → 按下瞬间跳位）。
     orbHit.InputBegan:Connect(function(input)
         local t = input.UserInputType
         if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then return end
         startOrbDrag(input)
     end)
-    -- 兼容少数只派发 MouseButton1Down 的执行器：InputBegan 已开启时不重复
     orbHit.MouseButton1Down:Connect(function()
         if orbDragging then return end
         startOrbDrag(nil)
     end)
 
-    -- 点击展开兜底：部分执行器 / 触屏下 MouseButton1Down 与 InputEnded 的
-    -- 派发顺序或配对不保证（Down 可能不触发，或 InputEnded 先于 Down 到达），
-    -- 仅靠上面的动态 InputEnded 连接会漏掉展开。这里用标准 Click 事件补一条，
-    -- 拖动过则不展开；expand 自身有 not _collapsed 守卫，重复触发安全。
     orbHit.MouseButton1Click:Connect(function()
         if not orbMoved then expand(win) end
     end)
@@ -2783,7 +2654,6 @@ function Library.CreateWindow(opts)
     UserInputService.InputBegan:Connect(function(input)
         if not (gui and gui.Parent) then return end
 
-        -- ColorPicker：面板展开时点击「面板 / 触发块」之外的任意位置自动收起
         local openPicker = false
         for _, p in ipairs(win._colorPanels or {}) do
             if p and p.Visible then openPicker = true break end
@@ -2843,7 +2713,6 @@ function Library.CreateWindow(opts)
         end
     end)
 
-    -- 显示主 UI：背景图未下载完成前不显示主 UI
     local revealed = false
     local function revealMain()
         if revealed then return end
@@ -2856,12 +2725,10 @@ function Library.CreateWindow(opts)
     end
 
     if background and background:IsA("ImageLabel") and type(bgUrl) == "string" and bgUrl ~= "" then
-        -- 先把主窗口藏起来，等背景图下载到本地对应 folder 完成后再显示
         win._main.Visible = false
         task.spawn(function()
             local ok, data = pcall(function() return game:HttpGet(bgUrl) end)
             if ok and type(data) == "string" and #data > 0 then
-                -- 下载到 AsLab/<Folder>/ 子文件夹中存储
                 pcall(function()
                     makefolder(RootFolder)
                     makefolder(AssetDir)
@@ -2873,7 +2740,7 @@ function Library.CreateWindow(opts)
             end
             revealMain()
         end)
-        task.delay(12, revealMain)  -- 兜底：最长等待 12 秒
+        task.delay(12, revealMain)
     else
         revealMain()
     end
@@ -2889,7 +2756,6 @@ function Library:_fadeIn()
     self._fadeGen = (self._fadeGen or 0) + 1
     local gen = self._fadeGen
     if self._main and self._main.Parent then
-        -- main 为 Frame，无 GroupTransparency（始终可见）
     end
     local scale = self._mainScale
     if not (scale and scale.Parent) then return end
@@ -2902,7 +2768,7 @@ function Library:_fadeIn()
     task.delay(0.55, function()
         if self._fadeGen ~= gen then return end
         if scale and scale.Parent then scale.Scale = 1 end
-        if self._main and self._main.Parent then end -- main 为 Frame，无 GroupTransparency（始终可见）
+        if self._main and self._main.Parent then end
     end)
 end
 
@@ -2913,7 +2779,6 @@ function Library:_finishFadeIn()
         self._fadeTween = nil
     end
     if self._main and self._main.Parent then
-        -- main 为 Frame，无 GroupTransparency（始终可见）
     end
 end
 
@@ -2947,8 +2812,6 @@ function Library:AddTab(name, icon)
     selStroke.Transparency = 1
     selStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
     selStroke:SetAttribute("_skipFade", true)
-    -- 选中块不再用亮银渐变（真机发灰时会让白字/图标与背景糊在一起），
-    -- 改用与高亮块同色系的低对比渐变，保证文字与图标始终清晰。
     local selGrad = Instance.new("UIGradient", sel)
     selGrad.Rotation = 135
     selGrad.Color = ColorSequence.new({
