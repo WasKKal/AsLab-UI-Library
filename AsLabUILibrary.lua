@@ -2873,6 +2873,17 @@ function Library.CreateWindow(opts)
     orbBlend.Changed:Connect(function() applyOrbLayout(win) end)
 
     local SET_Z = ZBASE + 60
+    -- 银白渐变（Settings 的 Slider 填充与 Apply 按钮共用）
+    local function silverGradient(parent)
+        local g = Instance.new("UIGradient", parent)
+        g.Rotation = 90
+        g.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Style.SilverTop),
+            ColorSequenceKeypoint.new(1, Style.SilverBottom),
+        })
+        return g
+    end
+
     local overlay = Instance.new("Frame", main)
     overlay.Name = "SettingsOverlay"
     overlay.Size = UDim2.fromScale(1, 1)
@@ -2886,10 +2897,14 @@ function Library.CreateWindow(opts)
     local ovCorner = Instance.new("UICorner", overlay)
     ovCorner.CornerRadius = UDim.new(0, s(24))
 
+    -- 蓝色尺寸预览框：与窗口同级挂在 gui，避免被 main 子树裁剪；
+    -- 以「窗口中心」为锚点向四周放大（非右上展开）。ZIndex 低于 Settings 面板，
+    -- 因此不会遮挡面板，又高于被遮罩的窗口内容而保持可见。
     local preview = Instance.new("Frame", gui)
     preview.Name = "SizePreview"
+    preview.AnchorPoint = Vector2.new(0.5, 0.5)
     preview.Size = UDim2.fromOffset(win._sizeX, win._sizeY)
-    preview.Position = UDim2.fromOffset(main.Position.X.Offset, main.Position.Y.Offset)
+    preview.Position = UDim2.fromOffset(main.Position.X.Offset + win._sizeX / 2, main.Position.Y.Offset + win._sizeY / 2)
     preview.BackgroundColor3 = Color3.fromRGB(70, 145, 255)
     preview.BackgroundTransparency = 0.82
     preview.BorderSizePixel = 0
@@ -2903,7 +2918,8 @@ function Library.CreateWindow(opts)
     pvStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 
     local pW, pH = s(320), s(244)
-    local panel = makeGlass(overlay, {
+    -- 面板直接挂在 gui（与窗口、预览同级），ZIndex 高于预览：保证不被蓝色预览框遮挡。
+    local panel = makeGlass(gui, {
         Name = "SettingsPanel",
         Size = UDim2.fromOffset(pW, pH),
         Position = UDim2.new(0.5, -pW / 2, 0.5, -pH / 2),
@@ -2912,7 +2928,7 @@ function Library.CreateWindow(opts)
         Color = Color3.fromRGB(22, 23, 29),
         Plain = true,
     })
-    panel.ZIndex = SET_Z + 1
+    panel.ZIndex = ZBASE + 52
     panel.ClipsDescendants = false
 
     local titleLbl = Instance.new("TextLabel", panel)
@@ -2988,10 +3004,11 @@ function Library.CreateWindow(opts)
     local sFill = Instance.new("Frame", sTrack)
     sFill.Name = "SettingsSliderFill"
     sFill.Size = UDim2.new(0.42, 0, 1, 0)
-    sFill.BackgroundColor3 = Style.SliderFill
+    sFill.BackgroundColor3 = Color3.new(1, 1, 1)
     sFill.BorderSizePixel = 0
     sFill.Active = false
     sFill.ZIndex = SET_Z + 3
+    local sfg = silverGradient(sFill)
     local sfc = Instance.new("UICorner", sFill)
     sfc.CornerRadius = UDim.new(0, s(4))
     local sThumb = Instance.new("Frame", sTrack)
@@ -3021,15 +3038,16 @@ function Library.CreateWindow(opts)
     applyBtn.Name = "Apply"
     applyBtn.Size = UDim2.fromOffset(pW - s(48), s(32))
     applyBtn.Position = UDim2.fromOffset(s(24), pH - s(46))
-    applyBtn.BackgroundColor3 = Color3.fromRGB(70, 110, 200)
-    applyBtn.BackgroundTransparency = 0.12
+    applyBtn.BackgroundColor3 = Color3.new(1, 1, 1)
+    applyBtn.BackgroundTransparency = Style.SilverTransparency
     applyBtn.BorderSizePixel = 0
     applyBtn.Text = "Apply"
     applyBtn.Font = Style.Font
     applyBtn.TextSize = s(14)
-    applyBtn.TextColor3 = Color3.new(1, 1, 1)
+    applyBtn.TextColor3 = Style.ActiveText
     applyBtn.AutoButtonColor = false
     applyBtn.ZIndex = SET_Z + 3
+    local abg = silverGradient(applyBtn)
     local abCorner = Instance.new("UICorner", applyBtn)
     abCorner.CornerRadius = UDim.new(0, s(9))
 
@@ -3058,11 +3076,15 @@ function Library.CreateWindow(opts)
     local function updatePreview(k)
         if not (win._settingsOpen and k) then preview.Visible = false return end
         local nw, nh = win._sizeX * k, win._sizeY * k
+        local curW, curH = win._sizeX * (win._uiScale or 1), win._sizeY * (win._uiScale or 1)
         local vw, vh = viewport()
-        local px = math.clamp(main.Position.X.Offset, 0, math.max(0, vw - nw))
-        local py = math.clamp(main.Position.Y.Offset, 0, math.max(0, vh - nh))
+        -- 以「当前窗口中心」为锚点向四周放大，而不是向右下角展开
+        local cx = main.Position.X.Offset + curW / 2
+        local cy = main.Position.Y.Offset + curH / 2
+        cx = math.clamp(cx, nw / 2, math.max(nw / 2, vw - nw / 2))
+        cy = math.clamp(cy, nh / 2, math.max(nh / 2, vh - nh / 2))
         preview.Size = UDim2.fromOffset(nw, nh)
-        preview.Position = UDim2.fromOffset(px, py)
+        preview.Position = UDim2.fromOffset(cx, cy)
         preview.Visible = true
     end
 
@@ -3148,6 +3170,7 @@ function Library.CreateWindow(opts)
             for _, ch in ipairs(node:GetChildren()) do markSkip(ch) end
         end
         markSkip(overlay)
+        markSkip(panel)
         markSkip(preview)
     end
 
