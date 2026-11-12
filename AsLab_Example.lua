@@ -197,6 +197,28 @@ end })
 
 local TabNotify = Win:AddTab("Notify", "bell")
 
+local autoNotifyOn = false
+local autoNotifyGen = 0
+local autoNotifySeq = 0
+
+TabNotify:AddToggle({ Title = "Auto Notify (1s)", Icon = "bell", Default = false, Callback = function(v)
+    autoNotifyOn = v
+    autoNotifyGen = autoNotifyGen + 1
+    local myGen = autoNotifyGen
+    if not v then return end
+    task.spawn(function()
+        while autoNotifyOn and autoNotifyGen == myGen do
+            autoNotifySeq = autoNotifySeq + 1
+            Win:ShowNotify({
+                Title = "Live #" .. autoNotifySeq,
+                Info = "Auto #" .. autoNotifySeq .. " every 1s - minimize to see the capsule",
+                Time = 2,
+            })
+            task.wait(1)
+        end
+    end)
+end })
+
 TabNotify:AddButton({ Title = "Single", Icon = "bell", Callback = function()
     Win:ShowNotify({ Title = "Hello", Info = "This is a short message.", Time = 4 })
 end })
