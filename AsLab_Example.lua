@@ -7,6 +7,11 @@ local Win = Library.CreateWindow({
     Size = UDim2.fromOffset(540, 400),
     Info = "Info Bar",
     Background = "https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/assets/aslab_wallpaper.png",
+    -- Folder 签名：在根目录 AsLab 下创建名为 Example 的子文件夹。
+    -- 背景图与配置都存放于 AsLab/Example/ ：
+    --   AsLab/Example/background.png
+    --   AsLab/Example/config.json
+    Folder = "Example",
 })
 
 local TabGeneral = Win:AddTab("General", "settings")
@@ -212,7 +217,8 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
     end
 end)
 
--- 演示 ConfigKey：把带 ConfigKey 的控件状态落盘到 AsLab/Config 文件夹
+-- 演示 ConfigKey：把带 ConfigKey 的控件状态写入 AsLab/Example/config.json
+-- （同时镜像一份到 AsLab/Example/Config 的 ValueBase 实例中）
 Win:SaveConfig()
 Win:LoadConfig()
 
