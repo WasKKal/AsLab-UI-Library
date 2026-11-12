@@ -435,6 +435,173 @@ local function makeBox(parent, w, text)
     return box, label, hit, conflict
 end
 
+local function makeDropdown(parent, opts)
+    opts = opts or {}
+    local options = opts.Options or {}
+    local capW = opts.Width or s(140)
+    local capH = opts.Height or s(26)
+    local capPos = opts.Position or UDim2.new(1, -capW - s(10), 0.5, -capH / 2)
+    local z = opts.ZIndex or (ZBASE + 8)
+    local selected = opts.Default or options[1] or ""
+    local cb = opts.Callback
+    local obj
+    local closeMenu, refreshHighlights
+    local optionButtons = {}
+    local menuOpen = false
+    local outsideConn = nil
+
+    local capsule = Instance.new("TextButton", parent)
+    capsule.Name = "DropdownCapsule"
+    capsule.Size = UDim2.fromOffset(capW, capH)
+    capsule.Position = capPos
+    capsule.BackgroundColor3 = Color3.fromRGB(38, 38, 48)
+    capsule.BackgroundTransparency = 0.12
+    capsule.BorderSizePixel = 0
+    capsule.Text = ""
+    capsule.AutoButtonColor = false
+    capsule.ZIndex = z
+    local capCorner = Instance.new("UICorner", capsule)
+    capCorner.CornerRadius = UDim.new(0.5, 0)
+    local capStroke = Instance.new("UIStroke", capsule)
+    capStroke.Color = Color3.fromRGB(150, 150, 160)
+    capStroke.Thickness = 1
+    capStroke.Transparency = 0.35
+    capStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+    local capLabel = Instance.new("TextLabel", capsule)
+    capLabel.Name = "DdLabel"
+    capLabel.Size = UDim2.new(1, -s(28), 1, 0)
+    capLabel.Position = UDim2.fromOffset(s(11), 0)
+    capLabel.BackgroundTransparency = 1
+    capLabel.Font = Style.Font
+    capLabel.TextSize = s(12)
+    capLabel.TextColor3 = Color3.new(1, 1, 1)
+    capLabel.TextXAlignment = Enum.TextXAlignment.Left
+    capLabel.TextYAlignment = Enum.TextYAlignment.Center
+    capLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    capLabel.Text = tostring(selected)
+    capLabel.ZIndex = z + 1
+    capLabel:SetAttribute("_skipFade", true)
+    local arrow = Instance.new("ImageLabel", capsule)
+    arrow.Name = "DdArrow"
+    arrow.Size = UDim2.fromOffset(s(12), s(12))
+    arrow.AnchorPoint = Vector2.new(1, 0.5)
+    arrow.Position = UDim2.new(1, -s(9), 0.5, 0)
+    arrow.BackgroundTransparency = 1
+    arrow.Active = false
+    arrow.ZIndex = z + 1
+    arrow:SetAttribute("_skipFade", true)
+    applyIcon(arrow, "chevron-down", Style.SubText)
+
+    local optH = s(28)
+    local menuH = #options * optH + s(8)
+    local menu = Instance.new("Frame", parent)
+    menu.Name = "DropdownMenu"
+    menu.Size = UDim2.fromOffset(capW, menuH)
+    menu.Position = UDim2.new(capPos.X.Scale, capPos.X.Offset,
+        capPos.Y.Scale, capPos.Y.Offset + capH + s(4))
+    menu.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+    menu.BackgroundTransparency = 0.02
+    menu.BorderSizePixel = 0
+    menu.ClipsDescendants = true
+    menu.Visible = false
+    menu.ZIndex = z + 10
+    local menuCorner = Instance.new("UICorner", menu)
+    menuCorner.CornerRadius = UDim.new(0, s(10))
+    local menuStroke = Instance.new("UIStroke", menu)
+    menuStroke.Color = Color3.fromRGB(150, 150, 160)
+    menuStroke.Thickness = 1
+    menuStroke.Transparency = 0.45
+    menuStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+
+    for i, name in ipairs(options) do
+        local txt = tostring(name)
+        local ob = Instance.new("TextButton", menu)
+        ob.Name = "DdOption"
+        ob.Size = UDim2.new(1, -s(8), 0, optH)
+        ob.Position = UDim2.fromOffset(s(4), s(4) + (i - 1) * optH)
+        ob.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+        ob.BackgroundTransparency = 1
+        ob.BorderSizePixel = 0
+        ob.Text = ""
+        ob.AutoButtonColor = false
+        ob.ZIndex = z + 11
+        local oc = Instance.new("UICorner", ob)
+        oc.CornerRadius = UDim.new(0, s(6))
+        local tx = Instance.new("TextLabel", ob)
+        tx.Name = "DdOptText"
+        tx.Size = UDim2.fromScale(1, 1)
+        tx.BackgroundTransparency = 1
+        tx.Font = Style.Font
+        tx.TextSize = s(12)
+        tx.TextColor3 = Color3.fromRGB(230, 230, 235)
+        tx.TextXAlignment = Enum.TextXAlignment.Center
+        tx.TextYAlignment = Enum.TextYAlignment.Center
+        tx.Text = txt
+        tx.ZIndex = z + 12
+        tx:SetAttribute("_skipFade", true)
+        ob.MouseButton1Click:Connect(function()
+            selected = txt
+            capLabel.Text = txt
+            refreshHighlights()
+            closeMenu()
+            if cb then pcall(cb, txt) end
+            if obj and obj._configValue then obj._configCurrent = txt; syncConfigValue(obj) end
+        end)
+        optionButtons[i] = { btn = ob, tx = tx, name = txt }
+    end
+
+    refreshHighlights = function()
+        for _, o in ipairs(optionButtons) do
+            local on = (o.name == selected)
+            o.tx.TextColor3 = on and Color3.fromRGB(226, 234, 250) or Color3.fromRGB(230, 230, 235)
+            o.btn.BackgroundColor3 = on and Color3.fromRGB(62, 76, 112) or Color3.fromRGB(24, 24, 30)
+            o.btn.BackgroundTransparency = on and 0 or 1
+        end
+    end
+
+    local function hitTest(o, px, py)
+        if not (o and o.Parent) then return false end
+        local a, sz = o.AbsolutePosition, o.AbsoluteSize
+        if not (a and sz) then return false end
+        return px >= a.X - 2 and px <= a.X + sz.X + 2
+            and py >= a.Y - 2 and py <= a.Y + sz.Y + 2
+    end
+
+    closeMenu = function()
+        if not menuOpen then return end
+        menuOpen = false
+        menu.Visible = false
+        if outsideConn then pcall(function() outsideConn:Disconnect() end) outsideConn = nil end
+    end
+
+    capsule.MouseButton1Click:Connect(function()
+        if menuOpen then closeMenu() return end
+        menuOpen = true
+        menu.Visible = true
+        refreshHighlights()
+        outsideConn = UserInputService.InputBegan:Connect(function(input)
+            if not menuOpen then return end
+            local t = input.UserInputType
+            if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then return end
+            local px, py = inputPoint(input)
+            if not hitTest(capsule, px, py) and not hitTest(menu, px, py) then closeMenu() end
+        end)
+    end)
+
+    obj = { Value = selected }
+    function obj:Set(v)
+        selected = (v ~= nil) and tostring(v) or ""
+        capLabel.Text = selected
+        obj.Value = selected
+        refreshHighlights()
+        if obj._configValue then obj._configCurrent = selected; syncConfigValue(obj) end
+    end
+    function obj:Get() return selected end
+    obj._closeMenu = closeMenu
+    refreshHighlights()
+    return obj
+end
+
 local function makeRow(parent, index, title)
     local row = makeGlass(parent, {
         Name = "Row",
@@ -983,16 +1150,44 @@ buildDetail = function(win, ctrl)
     khit.MouseButton1Click:Connect(function() startListen(win, ctrl, klabel) end)
 
     local arow = makeRow(layer, 1, "AddShortcut")
-    local _, alabel, ahit = makeBox(arow, s(110), "Create")
-    ahit.MouseButton1Click:Connect(function()
-        if ctrl._shortcut then
-            destroyShortcut(win, ctrl)
-            alabel.Text = "Create"
+    local abox, alabel, ahit = makeBox(arow, s(110), "Create")
+    abox.BackgroundTransparency = 0.3
+    local aicon = Instance.new("ImageLabel", abox)
+    aicon.Name = "StateIcon"
+    aicon.Size = UDim2.fromOffset(s(13), s(13))
+    aicon.Position = UDim2.new(0, s(6), 0.5, -s(6.5))
+    aicon.BackgroundTransparency = 1
+    aicon.Active = false
+    aicon.ZIndex = ZBASE + 4
+    aicon:SetAttribute("_skipFade", true)
+    alabel.Size = UDim2.new(1, -s(22), 1, 0)
+    alabel.Position = UDim2.fromOffset(s(20), 0)
+    alabel.TextXAlignment = Enum.TextXAlignment.Left
+    local aStroke = abox:FindFirstChildOfClass("UIStroke")
+    local function refreshAddState()
+        local exists = ctrl._shortcut ~= nil
+        alabel.Text = exists and "Delete" or "Create"
+        local fg, bg, sc
+        if exists then
+            fg = Color3.fromRGB(255, 156, 156)
+            bg = Color3.fromRGB(82, 38, 42)
+            sc = Color3.fromRGB(224, 112, 112)
+            aicon.Visible = applyIcon(aicon, "trash-2", fg)
         else
-            createShortcut(win, ctrl)
-            alabel.Text = "Delete"
+            fg = Color3.fromRGB(146, 236, 180)
+            bg = Color3.fromRGB(32, 68, 50)
+            sc = Color3.fromRGB(110, 212, 152)
+            aicon.Visible = applyIcon(aicon, "plus", fg)
         end
+        abox.BackgroundColor3 = bg
+        alabel.TextColor3 = fg
+        if aStroke then aStroke.Color = sc end
+    end
+    ahit.MouseButton1Click:Connect(function()
+        if ctrl._shortcut then destroyShortcut(win, ctrl) else createShortcut(win, ctrl) end
+        refreshAddState()
     end)
+    refreshAddState()
     ctrl._detailCount = 2
     updateCanvas(win)
 end
@@ -1457,6 +1652,32 @@ addDetailRow = function(win, ctrl, kind, opts)
             syncConfigValue(obj)
         end
         return obj
+    elseif kind == "Dropdown" then
+        local options = opts.Options or {}
+        local def = opts.Default or options[1] or ""
+        local obj
+        obj = makeDropdown(row, {
+            Width = s(150),
+            Height = s(24),
+            Position = UDim2.new(1, -s(150) - s(10), 0.5, -s(12)),
+            Options = options,
+            Default = def,
+            ZIndex = ZBASE + 8,
+            Callback = function(v)
+                if obj then obj.Value = v end
+                if opts.Callback then pcall(opts.Callback, v) end
+            end,
+        })
+        if opts.ConfigKey and opts.ConfigKey ~= "" then
+            obj._configKey = opts.ConfigKey
+            obj._configKind = "Dropdown"
+            win._config = win._config or {}
+            win._config[opts.ConfigKey] = obj
+            obj._configValue = makeConfigValue(win, opts.ConfigKey, "Dropdown")
+            obj._configCurrent = def
+            syncConfigValue(obj)
+        end
+        return obj
     end
     return {}
 end
@@ -1685,6 +1906,7 @@ local function addControl(tab, kind, opts)
     function ctrl:AddToggle(o) return addDetailRow(tab._win, ctrl, "Toggle", o) end
     function ctrl:AddButton(o) return addDetailRow(tab._win, ctrl, "Button", o) end
     function ctrl:AddColorPicker(o) return addDetailRow(tab._win, ctrl, "ColorPicker", o) end
+    function ctrl:AddDropdown(o) return addDetailRow(tab._win, ctrl, "Dropdown", o) end
 
     table.insert(tab._controls, ctrl)
     relayout(tab)
@@ -2129,7 +2351,7 @@ function Library:ShowNotify(opts)
 end
 
 local function cancelAnim(win)
-    for _, key in ipairs({ "_mainTween", "_mainFadeTween", "_cornerTween", "_orbTween", "_fadeTween",
+    for _, key in ipairs({ "_mainTween", "_mainScaleTween", "_mainFadeTween", "_cornerTween", "_orbTween", "_fadeTween",
                            "_mainTweenPos", "_posTween" }) do
         local tw = win[key]
         if tw then pcall(function() tw:Cancel() end) win[key] = nil end
@@ -2161,6 +2383,7 @@ end
 
 local function collapse(win)
     if win._collapsed then return end
+    if win._closeSettings then pcall(win._closeSettings) end
     win._collapsed = true
     win._panelAnimGen = (win._panelAnimGen or 0) + 1
     local gen = win._panelAnimGen
@@ -2184,13 +2407,16 @@ local function collapse(win)
     win._orbBlend.Value = (win._orbSide == "left") and 0 or 1
     applyOrbLayout(win)
 
-    if win._mainScale then win._mainScale.Scale = 1 end
     local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
     win._mainTween = TweenService:Create(main, ti, {
         Size = UDim2.fromOffset(ORB, ORB),
         Position = UDim2.fromOffset(endX, endY),
     })
     win._mainTween:Play()
+    if win._mainScale then
+        win._mainScaleTween = TweenService:Create(win._mainScale, ti, { Scale = 1 })
+        win._mainScaleTween:Play()
+    end
     if win._mainCorner then
         win._cornerTween = TweenService:Create(win._mainCorner, ti,
             { CornerRadius = UDim.new(0, ORB / 2) })
@@ -2227,27 +2453,61 @@ local function expand(win)
     win:_finishFadeIn()
     clearCapsule(win, true)
     cancelAnim(win)
-    win._main.Visible = true
-    win._orb.Visible = false
+    local main = win._main
+    local baseW = (win._mainSizeBeforeCollapse and win._mainSizeBeforeCollapse.X.Offset) or win._sizeX
+    local baseH = (win._mainSizeBeforeCollapse and win._mainSizeBeforeCollapse.Y.Offset) or win._sizeY
+    local anchorX = win._orbBaseX - TITLE_ICON_DX
+    local anchorY = win._orbBaseY - TITLE_ICON_DY
+    local vw, vh = viewport()
+    local visW = baseW * (win._uiScale or 1)
+    local visH = baseH * (win._uiScale or 1)
+    local goalX = math.clamp(anchorX, 0, math.max(0, vw - visW))
+    local goalY = math.clamp(anchorY, 0, math.max(0, vh - visH))
+    main.Size = UDim2.fromOffset(ORB, ORB)
+    main.Position = UDim2.fromOffset(anchorX, anchorY)
     if win._mainScale then win._mainScale.Scale = 1 end
+    main.Visible = true
+    win._orb.Visible = false
     setMainContentVisible(win, true)
-    local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-    win._mainTween = TweenService:Create(win._main, ti, {
-        Size = win._mainSizeBeforeCollapse or win._main.Size,
-        Position = win._mainPosBeforeCollapse or win._main.Position,
+    local ti = TweenInfo.new(COLLAPSE_T, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+    win._mainTween = TweenService:Create(main, ti, {
+        Size = UDim2.fromOffset(baseW, baseH),
+        Position = UDim2.fromOffset(goalX, goalY),
     })
     win._mainTween:Play()
+    if win._mainScale then
+        win._mainScaleTween = TweenService:Create(win._mainScale, ti, { Scale = win._uiScale or 1 })
+        win._mainScaleTween:Play()
+    end
     if win._mainCorner then
         win._cornerTween = TweenService:Create(win._mainCorner, ti,
             { CornerRadius = UDim.new(0, s(24)) })
         win._cornerTween:Play()
     end
+    win._mainPosBeforeCollapse = UDim2.fromOffset(goalX, goalY)
+    win._mainSizeBeforeCollapse = UDim2.fromOffset(baseW, baseH)
     task.delay(COLLAPSE_T + 0.02, function()
         if win._panelAnimGen ~= gen then return end
         win._panelAnimating = false
         win._panelState = "open"
+        pcall(function() syncOrbBase(win) end)
         flushNotifyQueue(win)
     end)
+end
+
+function Library:OnLanguageChanged(fn)
+    self._languageChanged = fn
+    return self
+end
+
+function Library:SetLanguage(v)
+    self._language = tostring(v or "English")
+    if self._languageChanged then pcall(self._languageChanged, self._language) end
+    return self
+end
+
+function Library:GetLanguage()
+    return self._language or "English"
 end
 
 function Library.CreateWindow(opts)
@@ -2461,8 +2721,10 @@ function Library.CreateWindow(opts)
         return b
     end
     local fbtnX = s(2)
-    local closeBtn = makeFooterButton("Close", "x", fbtnX, "X")
-    local minBtn = makeFooterButton("Minimize", "minimize", fbtnX + fbtn + s(10), "_")
+    local fstep = fbtn + s(6)
+    local minBtn = makeFooterButton("Minimize", "minimize", fbtnX, "_")
+    local settingsBtn = makeFooterButton("Settings", "monitor-cog", fbtnX + fstep, "S")
+    local closeBtn = makeFooterButton("Close", "x", fbtnX + fstep * 2, "X")
 
     local orb = Instance.new("Frame", gui)
     orb.Name = "Orb"
@@ -2566,6 +2828,13 @@ function Library.CreateWindow(opts)
         _selected = nil,
         _sizeX = Size.X.Offset,
         _sizeY = Size.Y.Offset,
+        _uiScale = 1,
+        _visW = Size.X.Offset,
+        _visH = Size.Y.Offset,
+        _language = "English",
+        _settingsOpen = false,
+        _settingsScale = 1,
+        _settingsLanguage = "English",
         _controlW = Size.X.Offset - (PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN),
         _viewH = Size.Y.Offset - HEADER_H,
         _shortcuts = {},
@@ -2603,8 +2872,288 @@ function Library.CreateWindow(opts)
     orbExt.Changed:Connect(function() applyOrbLayout(win) end)
     orbBlend.Changed:Connect(function() applyOrbLayout(win) end)
 
+    local SET_Z = ZBASE + 60
+    local overlay = Instance.new("Frame", main)
+    overlay.Name = "SettingsOverlay"
+    overlay.Size = UDim2.fromScale(1, 1)
+    overlay.Position = UDim2.fromOffset(0, 0)
+    overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+    overlay.BackgroundTransparency = 0.55
+    overlay.BorderSizePixel = 0
+    overlay.ZIndex = SET_Z
+    overlay.Visible = false
+    overlay.ClipsDescendants = false
+    local ovCorner = Instance.new("UICorner", overlay)
+    ovCorner.CornerRadius = UDim.new(0, s(24))
+
+    local preview = Instance.new("Frame", gui)
+    preview.Name = "SizePreview"
+    preview.Size = UDim2.fromOffset(win._sizeX, win._sizeY)
+    preview.Position = UDim2.fromOffset(main.Position.X.Offset, main.Position.Y.Offset)
+    preview.BackgroundColor3 = Color3.fromRGB(70, 145, 255)
+    preview.BackgroundTransparency = 0.82
+    preview.BorderSizePixel = 0
+    preview.Visible = false
+    preview.ZIndex = ZBASE + 50
+    local pvCorner = Instance.new("UICorner", preview)
+    pvCorner.CornerRadius = UDim.new(0, s(24))
+    local pvStroke = Instance.new("UIStroke", preview)
+    pvStroke.Color = Color3.fromRGB(96, 165, 255)
+    pvStroke.Thickness = 2
+    pvStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+
+    local pW, pH = s(320), s(244)
+    local panel = makeGlass(overlay, {
+        Name = "SettingsPanel",
+        Size = UDim2.fromOffset(pW, pH),
+        Position = UDim2.new(0.5, -pW / 2, 0.5, -pH / 2),
+        Transparency = 0.06,
+        Radius = UDim.new(0, s(16)),
+        Color = Color3.fromRGB(22, 23, 29),
+        Plain = true,
+    })
+    panel.ZIndex = SET_Z + 1
+    panel.ClipsDescendants = false
+
+    local titleLbl = Instance.new("TextLabel", panel)
+    titleLbl.Name = "SettingsTitle"
+    titleLbl.Size = UDim2.fromOffset(pW - s(60), s(26))
+    titleLbl.Position = UDim2.fromOffset(s(16), s(10))
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Font = Style.Font
+    titleLbl.TextSize = s(16)
+    titleLbl.TextColor3 = Style.Text
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.TextYAlignment = Enum.TextYAlignment.Center
+    titleLbl.Text = "Settings"
+    titleLbl.ZIndex = SET_Z + 2
+
+    local xBtn = Instance.new("TextButton", panel)
+    xBtn.Name = "CloseSettings"
+    xBtn.Size = UDim2.fromOffset(s(26), s(26))
+    xBtn.Position = UDim2.fromOffset(pW - s(36), s(10))
+    xBtn.BackgroundTransparency = 1
+    xBtn.Text = ""
+    xBtn.AutoButtonColor = false
+    xBtn.ZIndex = SET_Z + 2
+    local xIcon = Instance.new("ImageLabel", xBtn)
+    xIcon.Size = UDim2.new(0.7, 0, 0.7, 0)
+    xIcon.Position = UDim2.new(0.15, 0, 0.15, 0)
+    xIcon.BackgroundTransparency = 1
+    xIcon.Active = false
+    xIcon.ZIndex = SET_Z + 3
+    if not applyIcon(xIcon, "x", Style.Text) then
+        xBtn.Text = "X"
+        xBtn.TextColor3 = Style.Text
+        xBtn.Font = Style.Font
+        xBtn.TextSize = s(14)
+    end
+
+    local sizeLbl = Instance.new("TextLabel", panel)
+    sizeLbl.Name = "SizeLabel"
+    sizeLbl.Size = UDim2.fromOffset(pW - s(48), s(20))
+    sizeLbl.Position = UDim2.fromOffset(s(24), s(48))
+    sizeLbl.BackgroundTransparency = 1
+    sizeLbl.Font = Style.Font
+    sizeLbl.TextSize = s(12)
+    sizeLbl.TextColor3 = Style.SubText
+    sizeLbl.TextXAlignment = Enum.TextXAlignment.Left
+    sizeLbl.Text = "Window Size"
+    sizeLbl.ZIndex = SET_Z + 2
+
+    local sVal = Instance.new("TextLabel", panel)
+    sVal.Name = "SizeValue"
+    sVal.Size = UDim2.fromOffset(s(60), s(20))
+    sVal.Position = UDim2.fromOffset(pW - s(84), s(48))
+    sVal.BackgroundTransparency = 1
+    sVal.Font = Style.Font
+    sVal.TextSize = s(12)
+    sVal.TextColor3 = Color3.fromRGB(120, 170, 255)
+    sVal.TextXAlignment = Enum.TextXAlignment.Right
+    sVal.Text = "100%"
+    sVal.ZIndex = SET_Z + 2
+
+    local sTrack = Instance.new("Frame", panel)
+    sTrack.Name = "SettingsSliderTrack"
+    sTrack.Size = UDim2.fromOffset(pW - s(48), s(8))
+    sTrack.Position = UDim2.fromOffset(s(24), s(76))
+    sTrack.BackgroundColor3 = Style.SliderTrack
+    sTrack.BackgroundTransparency = 0.2
+    sTrack.BorderSizePixel = 0
+    sTrack.ClipsDescendants = false
+    sTrack.Active = true
+    sTrack.ZIndex = SET_Z + 2
+    local stc = Instance.new("UICorner", sTrack)
+    stc.CornerRadius = UDim.new(0, s(4))
+    local sFill = Instance.new("Frame", sTrack)
+    sFill.Name = "SettingsSliderFill"
+    sFill.Size = UDim2.new(0.42, 0, 1, 0)
+    sFill.BackgroundColor3 = Style.SliderFill
+    sFill.BorderSizePixel = 0
+    sFill.Active = false
+    sFill.ZIndex = SET_Z + 3
+    local sfc = Instance.new("UICorner", sFill)
+    sfc.CornerRadius = UDim.new(0, s(4))
+    local sThumb = Instance.new("Frame", sTrack)
+    sThumb.Name = "SettingsSliderThumb"
+    sThumb.Size = UDim2.fromOffset(s(14), s(14))
+    sThumb.Position = UDim2.new(0.42, -s(7), 0.5, -s(7))
+    sThumb.BackgroundColor3 = Style.SliderThumb
+    sThumb.BorderSizePixel = 0
+    sThumb.Active = false
+    sThumb.ZIndex = SET_Z + 4
+    local sthc = Instance.new("UICorner", sThumb)
+    sthc.CornerRadius = UDim.new(1, 0)
+
+    local langLbl = Instance.new("TextLabel", panel)
+    langLbl.Name = "LangLabel"
+    langLbl.Size = UDim2.fromOffset(pW - s(48), s(20))
+    langLbl.Position = UDim2.fromOffset(s(24), s(100))
+    langLbl.BackgroundTransparency = 1
+    langLbl.Font = Style.Font
+    langLbl.TextSize = s(12)
+    langLbl.TextColor3 = Style.SubText
+    langLbl.TextXAlignment = Enum.TextXAlignment.Left
+    langLbl.Text = "Language"
+    langLbl.ZIndex = SET_Z + 2
+
+    local applyBtn = Instance.new("TextButton", panel)
+    applyBtn.Name = "Apply"
+    applyBtn.Size = UDim2.fromOffset(pW - s(48), s(32))
+    applyBtn.Position = UDim2.fromOffset(s(24), pH - s(46))
+    applyBtn.BackgroundColor3 = Color3.fromRGB(70, 110, 200)
+    applyBtn.BackgroundTransparency = 0.12
+    applyBtn.BorderSizePixel = 0
+    applyBtn.Text = "Apply"
+    applyBtn.Font = Style.Font
+    applyBtn.TextSize = s(14)
+    applyBtn.TextColor3 = Color3.new(1, 1, 1)
+    applyBtn.AutoButtonColor = false
+    applyBtn.ZIndex = SET_Z + 3
+    local abCorner = Instance.new("UICorner", applyBtn)
+    abCorner.CornerRadius = UDim.new(0, s(9))
+
+    local SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.75, 1.35, 0.05
+    local previewScale = win._uiScale or 1
+    local settingsLanguage = win._language or "English"
+    local langOptions = { "English", "简体中文", "日本語", "Español" }
+
+    local langDropdown = makeDropdown(panel, {
+        Width = pW - s(48),
+        Height = s(28),
+        Position = UDim2.fromOffset(s(24), s(124)),
+        Options = langOptions,
+        Default = settingsLanguage,
+        ZIndex = SET_Z + 4,
+        Callback = function(v) settingsLanguage = v end,
+    })
+
+    local function refreshScaleSlider()
+        local f = math.clamp((previewScale - SCALE_MIN) / (SCALE_MAX - SCALE_MIN), 0, 1)
+        sFill.Size = UDim2.new(f, 0, 1, 0)
+        sThumb.Position = UDim2.new(f, -s(7), 0.5, -s(7))
+        sVal.Text = tostring(math.floor(previewScale * 100 + 0.5)) .. "%"
+    end
+
+    local function updatePreview(k)
+        if not (win._settingsOpen and k) then preview.Visible = false return end
+        local nw, nh = win._sizeX * k, win._sizeY * k
+        local vw, vh = viewport()
+        local px = math.clamp(main.Position.X.Offset, 0, math.max(0, vw - nw))
+        local py = math.clamp(main.Position.Y.Offset, 0, math.max(0, vh - nh))
+        preview.Size = UDim2.fromOffset(nw, nh)
+        preview.Position = UDim2.fromOffset(px, py)
+        preview.Visible = true
+    end
+
+    local function setScaleFromFrac(f)
+        f = math.clamp(f or 0, 0, 1)
+        local raw = SCALE_MIN + f * (SCALE_MAX - SCALE_MIN)
+        previewScale = SCALE_MIN + math.floor((raw - SCALE_MIN) / SCALE_STEP + 0.5) * SCALE_STEP
+        previewScale = math.clamp(previewScale, SCALE_MIN, SCALE_MAX)
+        refreshScaleSlider()
+        updatePreview(previewScale)
+    end
+
+    sTrack.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            local function frac(inp)
+                local aw = sTrack.AbsoluteSize.X
+                if not aw or aw <= 0 then return 0.5 end
+                return math.clamp((inp.Position.X - sTrack.AbsolutePosition.X) / aw, 0, 1)
+            end
+            setScaleFromFrac(frac(input))
+            local conn
+            conn = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    if conn then pcall(function() conn:Disconnect() end) end
+                elseif input.Position then
+                    setScaleFromFrac(frac(input))
+                end
+            end)
+        end
+    end)
+
+    local function closeSettings()
+        win._settingsOpen = false
+        preview.Visible = false
+        overlay.Visible = false
+        if langDropdown and langDropdown._closeMenu then pcall(langDropdown._closeMenu) end
+    end
+    win._closeSettings = closeSettings
+
+    local function openSettings()
+        if win._settingsOpen then return end
+        win._settingsOpen = true
+        previewScale = win._uiScale or 1
+        settingsLanguage = win._language or "English"
+        refreshScaleSlider()
+        langDropdown:Set(settingsLanguage)
+        overlay.Visible = true
+        preview.Visible = false
+    end
+    win._openSettings = openSettings
+
+    local function applySettings()
+        local k = previewScale
+        win._uiScale = k
+        win._visW = win._sizeX * k
+        win._visH = win._sizeY * k
+        win._settingsScale = k
+        local ti = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+        win._mainScaleTween = TweenService:Create(mainScale, ti, { Scale = k })
+        win._mainScaleTween:Play()
+        local vw, vh = viewport()
+        local gx = math.clamp(main.Position.X.Offset, 0, math.max(0, vw - win._visW))
+        local gy = math.clamp(main.Position.Y.Offset, 0, math.max(0, vh - win._visH))
+        if math.abs(gx - main.Position.X.Offset) > 0.5 or math.abs(gy - main.Position.Y.Offset) > 0.5 then
+            win._posTween = TweenService:Create(main, ti, { Position = UDim2.fromOffset(gx, gy) })
+            win._posTween:Play()
+        else
+            main.Position = UDim2.fromOffset(gx, gy)
+        end
+        win._mainPosBeforeCollapse = UDim2.fromOffset(gx, gy)
+        win._settingsLanguage = settingsLanguage
+        win:SetLanguage(settingsLanguage)
+        pcall(function() win:SaveConfig() end)
+        closeSettings()
+    end
+
+    xBtn.MouseButton1Click:Connect(closeSettings)
+    applyBtn.MouseButton1Click:Connect(applySettings)
+
+    do
+        local function markSkip(node)
+            pcall(function() node:SetAttribute("_skipFade", true) end)
+            for _, ch in ipairs(node:GetChildren()) do markSkip(ch) end
+        end
+        markSkip(overlay)
+        markSkip(preview)
+    end
+
     closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
     minBtn.MouseButton1Click:Connect(function() collapse(win) end)
+    settingsBtn.MouseButton1Click:Connect(function() openSettings() end)
 
     local winDrag, winMoved, wsx, wsy, wox, woy
     local winMoveConn, winEndConn
@@ -2631,8 +3180,8 @@ function Library.CreateWindow(opts)
                 local dx, dy = mx - wsx, my - wsy
                 if math.abs(dx) + math.abs(dy) > 3 then winMoved = true end
                 local vw, vh = viewport()
-                local nx = math.clamp(wox + dx, 0, math.max(0, vw - win._sizeX))
-                local ny = math.clamp(woy + dy, 0, math.max(0, vh - win._sizeY))
+                local nx = math.clamp(wox + dx, 0, math.max(0, vw - (win._visW or win._sizeX)))
+                local ny = math.clamp(woy + dy, 0, math.max(0, vh - (win._visH or win._sizeY)))
                 win._main.Position = UDim2.fromOffset(nx, ny)
             end
         end)
@@ -2644,7 +3193,8 @@ function Library.CreateWindow(opts)
         end)
     end)
 
-    local orbDragging, orbMoved, orbStartX, orbStartY, orbOriginX, orbOriginY
+    local orbDragging, orbGestureMoved, orbSuppressClick, orbHaveStart
+    local orbStartX, orbStartY, orbOriginX, orbOriginY
     local orbMoveConn, orbEndConn
     local function stopOrbDrag()
         if not orbDragging then return end
@@ -2654,10 +3204,12 @@ function Library.CreateWindow(opts)
         if orbEndConn then pcall(function() orbEndConn:Disconnect() end) orbEndConn = nil end
     end
     local function startOrbDrag(input)
-        if orbDragging then stopOrbDrag() end
+        if orbDragging then return end
         orbDragging = true
         win._orbDragging = true
-        orbMoved = false
+        orbGestureMoved = false
+        orbSuppressClick = false
+        orbHaveStart = false
         orbStartX, orbStartY = inputPoint(input)
         orbOriginX, orbOriginY = win._orbBaseX, win._orbBaseY
         local capsuleLive = win._capsuleActive and win._capsuleCurrent ~= nil
@@ -2673,8 +3225,9 @@ function Library.CreateWindow(opts)
             local t = i.UserInputType
             if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
                 local mx, my = inputPoint(i)
+                if not orbHaveStart then orbStartX, orbStartY, orbHaveStart = mx, my, true end
                 local dx, dy = mx - orbStartX, my - orbStartY
-                if math.abs(dx) + math.abs(dy) > 3 then orbMoved = true end
+                if math.abs(dx) + math.abs(dy) > 4 then orbGestureMoved = true end
                 local w, h = viewport()
                 win._orbBaseX = math.clamp(orbOriginX + dx, 0, math.max(0, w - ORB))
                 win._orbBaseY = math.clamp(orbOriginY + dy, 0, math.max(0, h - ORB))
@@ -2686,8 +3239,9 @@ function Library.CreateWindow(opts)
         orbEndConn = UserInputService.InputEnded:Connect(function(i)
             local t = i.UserInputType
             if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
-                local wasMoved = orbMoved
+                local wasMoved = orbGestureMoved
                 stopOrbDrag()
+                orbSuppressClick = wasMoved
                 if not wasMoved then expand(win) end
             end
         end)
@@ -2703,7 +3257,8 @@ function Library.CreateWindow(opts)
     end)
 
     orbHit.MouseButton1Click:Connect(function()
-        if not orbMoved then expand(win) end
+        if orbSuppressClick then orbSuppressClick = false return end
+        if not orbGestureMoved then expand(win) end
     end)
 
     UserInputService.InputBegan:Connect(function(input)
@@ -2814,15 +3369,16 @@ function Library:_fadeIn()
     end
     local scale = self._mainScale
     if not (scale and scale.Parent) then return end
-    scale.Scale = 0.96
+    local targetScale = self._uiScale or 1
+    scale.Scale = targetScale * 0.96
     local tw = TweenService:Create(scale,
         TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { Scale = 1 })
+        { Scale = targetScale })
     self._fadeTween = tw
     tw:Play()
     task.delay(0.55, function()
         if self._fadeGen ~= gen then return end
-        if scale and scale.Parent then scale.Scale = 1 end
+        if scale and scale.Parent then scale.Scale = self._uiScale or 1 end
         if self._main and self._main.Parent then end
     end)
 end
