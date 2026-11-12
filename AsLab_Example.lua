@@ -291,9 +291,10 @@ game:GetService("UserInputService").InputBegan:Connect(function(input)
     end
 end)
 
--- 演示 ConfigKey：把带 ConfigKey 的控件状态写入 AsLab/Example/config.json
--- （同时镜像一份到 AsLab/Example/Config 的 ValueBase 实例中）
-Win:SaveConfig()
+-- 演示配置持久化：读取 AsLab/Example/config.json
+-- 除带 ConfigKey 的控件外，快捷键（Board-Key）与快捷图标的位置/开关状态也会一并保存与恢复
+-- 快捷键设置、清除以及快捷图标的创建/删除/拖拽会立即写盘；控件值在 Settings 里点 Apply 时写盘
+-- 启动时只调用 LoadConfig（先 SaveConfig 会用默认值覆盖上次保存的内容）
 Win:LoadConfig()
 
 -- ===== SetValue 演示（默认不自动执行，避免覆盖你自己保存的配置）=====
