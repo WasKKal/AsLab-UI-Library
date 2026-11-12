@@ -570,7 +570,7 @@ local function makeDropdown(parent, opts)
     closeMenu = function()
         if not menuOpen then return end
         menuOpen = false
-        menu.Visible = false
+        fadeGroup(menu, 1, function() if not menuOpen then menu.Visible = false end end)
         if outsideConn then pcall(function() outsideConn:Disconnect() end) outsideConn = nil end
     end
 
@@ -578,6 +578,8 @@ local function makeDropdown(parent, opts)
         if menuOpen then closeMenu() return end
         menuOpen = true
         menu.Visible = true
+        setGroupTransparency(menu, 1)
+        fadeGroup(menu, 0)
         refreshHighlights()
         outsideConn = UserInputService.InputBegan:Connect(function(input)
             if not menuOpen then return end
@@ -774,6 +776,18 @@ fadeGroup = function(group, target, onDone)
     return tweenGroup(group, target, nil, function()
         if fadeGen[group] == gen and onDone then onDone() end
     end)
+end
+
+-- 统一的「颜色面板」显隐：进入淡出/淡入动画，避免直接 Visible 硬切
+local function showColorPanel(p, show)
+    if not (p and p.Parent) then return end
+    if show then
+        p.Visible = true
+        setGroupTransparency(p, 1)
+        fadeGroup(p, 0)
+    else
+        fadeGroup(p, 1, function() if p and p.Parent then p.Visible = false end end)
+    end
 end
 
 local function relayout(tab)
@@ -1166,9 +1180,9 @@ buildDetail = function(win, ctrl)
     aicon.Active = false
     aicon.ZIndex = ZBASE + 4
     aicon:SetAttribute("_skipFade", true)
-    alabel.Size = UDim2.new(1, -s(22), 1, 0)
-    alabel.Position = UDim2.fromOffset(s(20), 0)
-    alabel.TextXAlignment = Enum.TextXAlignment.Left
+    alabel.Size = UDim2.new(1, -s(12), 1, 0)
+    alabel.Position = UDim2.fromOffset(s(6), 0)
+    alabel.TextXAlignment = Enum.TextXAlignment.Right
     local aStroke = abox:FindFirstChildOfClass("UIStroke")
     local function refreshAddState()
         local exists = ctrl._shortcut ~= nil
@@ -1633,9 +1647,9 @@ addDetailRow = function(win, ctrl, kind, opts)
         table.insert(win._colorTriggers, hit)
         hit.MouseButton1Click:Connect(function()
             for _, p in ipairs(win._colorPanels or {}) do
-                if p ~= panel then p.Visible = false end
+                if p ~= panel then showColorPanel(p, false) end
             end
-            panel.Visible = not panel.Visible
+            if panel.Visible then showColorPanel(panel, false) else showColorPanel(panel, true) end
         end)
 
         refresh(false)
@@ -1691,7 +1705,7 @@ end
 openDetail = function(win, ctrl)
     if win._detail then return end
     releaseAllPress(win)
-    for _, p in ipairs(win._colorPanels or {}) do p.Visible = false end
+    for _, p in ipairs(win._colorPanels or {}) do showColorPanel(p, false) end
     if win._listening then
         win._listening.label.Text = KEY_PLACEHOLDER
         win._listening.ctrl._keybind = nil
@@ -1714,6 +1728,12 @@ openDetail = function(win, ctrl)
     setGroupTransparency(layer, 1)
     fadeGroup(layer, 0)
     if win._scroller then win._scroller.CanvasPosition = Vector2.new(0, 0) end
+    -- 进入子选项页时，浮动 Shortcut 文本淡出并隐藏，避免它悬停在子选项页上方
+    for _, sh in ipairs(win._shortcuts or {}) do
+        if sh.frame and sh.frame.Parent then
+            fadeGroup(sh.frame, 1, function() if sh.frame and sh.frame.Parent then sh.frame.Visible = false end end)
+        end
+    end
     win._detail = ctrl
 end
 
@@ -1741,6 +1761,13 @@ closeDetail = function(win)
         fadeGroup(cont, 0, function()
             if not win._detail then releaseAllPress(win) end
         end)
+    end
+    -- 退出子选项页时，浮动 Shortcut 文本淡入显现（带渐隐动画，而非瞬现）
+    for _, sh in ipairs(win._shortcuts or {}) do
+        if sh.frame and sh.frame.Parent then
+            sh.frame.Visible = true
+            fadeGroup(sh.frame, 0)
+        end
     end
     win._detailContainer = nil
 end
@@ -2900,6 +2927,8 @@ function Library.CreateWindow(opts)
     overlay.ZIndex = SET_Z
     overlay.Visible = false
     overlay.ClipsDescendants = false
+    -- 阻止触摸穿透：Active=true 使得蒙版覆盖区域下的窗口控件无法接收点击/拖动
+    overlay.Active = true
     local ovCorner = Instance.new("UICorner", overlay)
     ovCorner.CornerRadius = UDim.new(0, s(24))
 
@@ -3020,17 +3049,6 @@ function Library.CreateWindow(opts)
     local sfg = silverGradient(sFill)
     local sfc = Instance.new("UICorner", sFill)
     sfc.CornerRadius = UDim.new(0, s(4))
-    local sThumb = Instance.new("Frame", sTrack)
-    sThumb.Name = "SettingsSliderThumb"
-    sThumb.Size = UDim2.fromOffset(s(14), s(14))
-    sThumb.Position = UDim2.new(0.42, -s(7), 0.5, -s(7))
-    sThumb.BackgroundColor3 = Style.SliderThumb
-    sThumb.BorderSizePixel = 0
-    sThumb.Active = false
-    sThumb.ZIndex = SET_Z + 4
-    local sthc = Instance.new("UICorner", sThumb)
-    sthc.CornerRadius = UDim.new(1, 0)
-
     local langLbl = Instance.new("TextLabel", panel)
     langLbl.Name = "LangLabel"
     langLbl.Size = UDim2.fromOffset(pW - s(48), s(20))
@@ -3078,8 +3096,21 @@ function Library.CreateWindow(opts)
     local function refreshScaleSlider()
         local f = math.clamp((previewScale - SCALE_MIN) / (SCALE_MAX - SCALE_MIN), 0, 1)
         sFill.Size = UDim2.new(f, 0, 1, 0)
-        sThumb.Position = UDim2.new(f, -s(7), 0.5, -s(7))
         sVal.Text = tostring(math.floor(previewScale * 100 + 0.5)) .. "%"
+    end
+
+    -- 平滑过渡预览框：以窗口中心为锚点向四周扩展/缩小，而非瞬间跳变
+    local previewTweens = {}
+    local function tweenPreview(nw, nh, cx, cy)
+        preview.Visible = true
+        local ti = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        for _, tw in ipairs(previewTweens) do pcall(function() tw:Cancel() end) end
+        previewTweens = {}
+        local tw1 = TweenService:Create(preview, ti, { Size = UDim2.fromOffset(nw, nh) })
+        local tw2 = TweenService:Create(preview, ti, { Position = UDim2.fromOffset(cx, cy) })
+        table.insert(previewTweens, tw1)
+        table.insert(previewTweens, tw2)
+        tw1:Play(); tw2:Play()
     end
 
     local function updatePreview(k)
@@ -3092,9 +3123,7 @@ function Library.CreateWindow(opts)
         local cy = main.Position.Y.Offset + curH / 2
         cx = math.clamp(cx, nw / 2, math.max(nw / 2, vw - nw / 2))
         cy = math.clamp(cy, nh / 2, math.max(nh / 2, vh - nh / 2))
-        preview.Size = UDim2.fromOffset(nw, nh)
-        preview.Position = UDim2.fromOffset(cx, cy)
-        preview.Visible = true
+        tweenPreview(nw, nh, cx, cy)
     end
 
     local function setScaleFromFrac(f)
@@ -3324,7 +3353,7 @@ function Library.CreateWindow(opts)
                     end
                 end
                 if not inside then
-                    for _, p in ipairs(win._colorPanels or {}) do p.Visible = false end
+                    for _, p in ipairs(win._colorPanels or {}) do showColorPanel(p, false) end
                 end
             end
         end
