@@ -3736,11 +3736,13 @@ function Library.CreateWindow(opts)
         end
 
         local function readBytes(path)
-            if type(isfile) ~= "function" or type(readfile) ~= "function" then return nil end
-            local ok, isf = pcall(isfile, path)
-            if not ok or not isf then return nil end
+            if type(readfile) ~= "function" then return nil end
+            if type(isfile) == "function" then
+                local ok, isf = pcall(isfile, path)
+                if not ok or not isf then return nil end
+            end
             local data = safeCall(readfile, path)
-            if type(data) ~= "string" then return nil end
+            if type(data) ~= "string" or data == "" then return nil end
             return data
         end
 
