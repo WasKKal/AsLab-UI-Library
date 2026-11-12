@@ -7,6 +7,7 @@ local Library = {}
 Library.__index = Library
 
 local fadeGroup, setGroupTransparency, tweenGroup, showColorPanel
+local slotY, createShortcut, destroyShortcut, startListen, refreshConflicts
 
 local SCALE = 0.85
 local function s(n) return n * SCALE end
@@ -337,16 +338,37 @@ local function makeConfigValue(win, key, kind)
     return v
 end
 
+local ctrlOwner = setmetatable({}, { __mode = "k" })
+
 local function syncConfigValue(ctrl)
     local v = ctrl and ctrl._configValue
     if not v then return end
     local value = ctrl._configCurrent
+    local first = (ctrl._cfgSynced ~= true)
+    local changed = false
     pcall(function()
-        if v:IsA("BoolValue") then v.Value = not not value
-        elseif v:IsA("NumberValue") then v.Value = tonumber(value) or 0
-        elseif v:IsA("Color3Value") then v.Value = value
-        elseif v:IsA("StringValue") then v.Value = tostring(value or "") end
+        if v:IsA("BoolValue") then
+            local b = not not value
+            changed = (v.Value ~= b)
+            v.Value = b
+        elseif v:IsA("NumberValue") then
+            local n = tonumber(value) or 0
+            changed = (v.Value ~= n)
+            v.Value = n
+        elseif v:IsA("Color3Value") then
+            changed = (v.Value ~= value)
+            v.Value = value
+        elseif v:IsA("StringValue") then
+            local str = tostring(value or "")
+            changed = (v.Value ~= str)
+            v.Value = str
+        end
     end)
+    ctrl._cfgSynced = true
+    if changed and not first then
+        local w = ctrlOwner[ctrl]
+        if w and type(w._autoSave) == "function" then pcall(w._autoSave, w) end
+    end
 end
 
 local HttpService = game:GetService("HttpService")
@@ -383,7 +405,35 @@ local function jsonToCfg(v)
     return v
 end
 
+local function ctrlKeyId(ctrl)
+    if ctrl._persistId then return ctrl._persistId end
+    local id
+    local key = ctrl._configKey
+    if type(key) == "string" and key ~= "" then
+        id = key
+    else
+        local tab = ctrl._tab
+        local tabName = ""
+        if tab then tabName = tostring(tab._name or "") end
+        id = tabName .. "/" .. tostring((ctrl._opts and ctrl._opts.Title) or ctrl._kind or "")
+    end
+    ctrl._persistId = id
+    return id
+end
+
+local function viewportSize()
+    local vw, vh
+    pcall(function()
+        local cam = workspace.CurrentCamera
+        if cam and cam.ViewportSize and cam.ViewportSize.X > 0 then
+            vw, vh = cam.ViewportSize.X, cam.ViewportSize.Y
+        end
+    end)
+    return vw, vh
+end
+
 function Library:SaveConfig()
+    self._savingConfig = true
     for _, ctrl in pairs(self._config or {}) do
         if ctrl then syncConfigValue(ctrl) end
     end
@@ -396,10 +446,44 @@ function Library:SaveConfig()
                     data[key] = cfgToJSON(ctrl._configCurrent)
                 end
             end
+            local keys, shortcuts = {}, {}
+            for _, tab in ipairs(self._tabs or {}) do
+                for _, c in ipairs(tab._controls or {}) do
+                    local id = ctrlKeyId(c)
+                    if c._keybind ~= nil then
+                        local kn = c._keybind.Name
+                        if type(kn) ~= "string" or kn == "" then kn = tostring(c._keybind) end
+                        keys[id] = kn
+                    end
+                    local sc = c._shortcut
+                    local frame = sc and sc.frame
+                    if frame and frame.Parent then
+                        shortcuts[id] = {
+                            on = true,
+                            x = math.floor((frame.Position.X.Offset or 0) + 0.5),
+                            y = math.floor((frame.Position.Y.Offset or 0) + 0.5),
+                        }
+                    end
+                end
+            end
+            if next(keys) ~= nil then data.__keys = keys end
+            if next(shortcuts) ~= nil then data.__shortcuts = shortcuts end
             writefile(path, jsonEncodeValue(data))
         end)
     end
+    self._savingConfig = false
     return self
+end
+
+function Library:_autoSave()
+    if self._loadingConfig or self._savingConfig then return end
+    local gen = (self._saveGen or 0) + 1
+    self._saveGen = gen
+    task.delay(0.4, function()
+        if self._saveGen ~= gen then return end
+        if self._loadingConfig or self._savingConfig then return end
+        pcall(function() self:SaveConfig() end)
+    end)
 end
 
 function Library:LoadConfig()
@@ -416,6 +500,7 @@ function Library:LoadConfig()
             end
         end)
     end
+    self._loadingConfig = true
     for key, ctrl in pairs(self._config or {}) do
         local applied = false
         if jsonData and jsonData[key] ~= nil and ctrl.Set then
@@ -432,6 +517,54 @@ function Library:LoadConfig()
             end
         end
     end
+    local savedKeys = jsonData and jsonData.__keys
+    if type(savedKeys) == "table" then
+        for _, tab in ipairs(self._tabs or {}) do
+            for _, c in ipairs(tab._controls or {}) do
+                local kbName = savedKeys[ctrlKeyId(c)]
+                if type(kbName) == "string" and kbName ~= "" then
+                    local kc = Enum.KeyCode[kbName]
+                    if kc then
+                        c._keybind = kc
+                        if c._keyLabel and c._keyLabel.Parent then
+                            c._keyLabel.Text = tostring(kc.Name)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local savedSc = jsonData and jsonData.__shortcuts
+    if type(savedSc) == "table" then
+        for _, tab in ipairs(self._tabs or {}) do
+            for _, c in ipairs(tab._controls or {}) do
+                local e = savedSc[ctrlKeyId(c)]
+                if type(e) == "table" and e.on ~= false then
+                    if not c._shortcut and type(createShortcut) == "function" then
+                        pcall(createShortcut, self, c)
+                    end
+                    local sc = c._shortcut
+                    local frame = sc and sc.frame
+                    if frame and frame.Parent then
+                        local fx = tonumber(e.x)
+                        local fy = tonumber(e.y)
+                        if fx and fy then
+                            local fw = frame.Size.X.Offset or 0
+                            local fh = frame.Size.Y.Offset or 0
+                            local vw, vh = viewportSize()
+                            if vw and vh then
+                                fx = math.clamp(fx, fw / 2, math.max(fw / 2, vw - fw / 2))
+                                fy = math.clamp(fy, fh / 2, math.max(fh / 2, vh - fh / 2))
+                            end
+                            frame.Position = UDim2.fromOffset(fx, fy)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    self._loadingConfig = false
+    if type(refreshConflicts) == "function" then pcall(refreshConflicts, self) end
     return self
 end
 
@@ -758,7 +891,6 @@ local function makeRow(parent, index, title)
     return row, label
 end
 
-local slotY, createShortcut, destroyShortcut, startListen
 local buildDetail, addDetailRow, openDetail, closeDetail
 
 local function updateCanvas(win)
@@ -1013,7 +1145,7 @@ local function fireClick(ctrl)
     syncShortcut(ctrl)
 end
 
-local function refreshConflicts(win)
+refreshConflicts = function(win)
     local groups = {}
     for _, t in ipairs(win._tabs or {}) do
         for _, c in ipairs(t._controls or {}) do
@@ -1157,6 +1289,8 @@ createShortcut = function(win, ctrl)
     table.insert(win._shortcuts, ctrl._shortcut)
     syncShortcut(ctrl)
     fadeGroup(sc, 0)
+    if ctrl._refreshAdd then pcall(ctrl._refreshAdd) end
+    if not win._loadingConfig then pcall(function() win:SaveConfig() end) end
 
     local dragging, moved, startX, startY, originX, originY, moveConn, endConn, haveStart
     local scaleTween, pressTween
@@ -1179,6 +1313,7 @@ createShortcut = function(win, ctrl)
             end)
         end
         if fire and not moved then fireClick(ctrl) end
+        if moved and not win._loadingConfig then pcall(function() win:SaveConfig() end) end
     end
     local dragStartInput = nil
     hit.InputBegan:Connect(function(input)
@@ -1236,6 +1371,8 @@ destroyShortcut = function(win, ctrl)
             if frame and frame.Parent then frame:Destroy() end
         end)
     end
+    if ctrl._refreshAdd then pcall(ctrl._refreshAdd) end
+    if not win._loadingConfig then pcall(function() win:SaveConfig() end) end
 end
 
 startListen = function(win, ctrl, label)
@@ -1341,6 +1478,7 @@ buildDetail = function(win, ctrl)
         refreshAddState()
     end)
     refreshAddState()
+    ctrl._refreshAdd = refreshAddState
     ctrl._detailCount = 2
     updateCanvas(win)
 end
@@ -1973,8 +2111,9 @@ local function addControl(tab, kind, opts)
         NoStroke = true,
     })
     block.AnchorPoint = Vector2.new(0.5, 0.5)
-    local ctrl = { _tab = tab, _kind = kind, _block = block, _opts = opts, _state = opts.Default or false }
+    local ctrl = { _tab = tab, _kind = kind, _block = block, _opts = opts, _state = (kind == "Toggle") and (opts.Default == true) or false }
     local cwin = tab._win
+    ctrlOwner[ctrl] = cwin
 
     function ctrl:Set(v)
         if kind == "Toggle" then
@@ -1983,6 +2122,14 @@ local function addControl(tab, kind, opts)
             if opts.Callback then pcall(opts.Callback, ctrl._state) end
         else
             if opts.Callback then pcall(opts.Callback) end
+        end
+        if ctrl._configValue then
+            if kind == "Toggle" then
+                ctrl._configCurrent = (ctrl._state == true)
+            else
+                ctrl._configCurrent = opts.Title or ""
+            end
+            syncConfigValue(ctrl)
         end
         syncShortcut(ctrl)
     end
@@ -1994,7 +2141,11 @@ local function addControl(tab, kind, opts)
         cwin._config = cwin._config or {}
         cwin._config[opts.ConfigKey] = ctrl
         ctrl._configValue = makeConfigValue(cwin, opts.ConfigKey, kind)
-        ctrl._configCurrent = (kind == "Toggle") and ctrl._state or (opts.Title or "")
+        if kind == "Toggle" then
+            ctrl._configCurrent = (ctrl._state == true)
+        else
+            ctrl._configCurrent = opts.Title or ""
+        end
         syncConfigValue(ctrl)
     end
 
@@ -2087,11 +2238,15 @@ local function addControl(tab, kind, opts)
     bindPress(ctrl)
     buildDetail(tab._win, ctrl)
 
-    function ctrl:AddSlider(o) return addDetailRow(tab._win, ctrl, "Slider", o) end
-    function ctrl:AddToggle(o) return addDetailRow(tab._win, ctrl, "Toggle", o) end
-    function ctrl:AddButton(o) return addDetailRow(tab._win, ctrl, "Button", o) end
-    function ctrl:AddColorPicker(o) return addDetailRow(tab._win, ctrl, "ColorPicker", o) end
-    function ctrl:AddDropdown(o) return addDetailRow(tab._win, ctrl, "Dropdown", o) end
+    local function own(obj)
+        if type(obj) == "table" then ctrlOwner[obj] = tab._win end
+        return obj
+    end
+    function ctrl:AddSlider(o) return own(addDetailRow(tab._win, ctrl, "Slider", o)) end
+    function ctrl:AddToggle(o) return own(addDetailRow(tab._win, ctrl, "Toggle", o)) end
+    function ctrl:AddButton(o) return own(addDetailRow(tab._win, ctrl, "Button", o)) end
+    function ctrl:AddColorPicker(o) return own(addDetailRow(tab._win, ctrl, "ColorPicker", o)) end
+    function ctrl:AddDropdown(o) return own(addDetailRow(tab._win, ctrl, "Dropdown", o)) end
 
     table.insert(tab._controls, ctrl)
     relayout(tab)
@@ -3711,12 +3866,14 @@ function Library.CreateWindow(opts)
                     listen.label.Text = tostring(kc.Name)
                     win._listening = nil
                     refreshConflicts(win)
+                    pcall(function() win:SaveConfig() end)
                 end
             elseif t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
                 listen.label.Text = KEY_PLACEHOLDER
                 listen.ctrl._keybind = nil
                 win._listening = nil
                 refreshConflicts(win)
+                pcall(function() win:SaveConfig() end)
             end
             return
         end
