@@ -564,21 +564,33 @@ end
 
 local function tweenGroup(container, target, ti, onDone)
     if not (container and container.Parent) then return end
+    local st = groupState[container]
+    if not st then st = { gt = 0, base = {} }; groupState[container] = st end
+    local oldTw, oldConn = st.tween, st.conn
+    st.tween = nil
+    st.conn = nil
+    if oldConn then pcall(function() oldConn:Disconnect() end) end
+    if oldTw then pcall(function() oldTw:Cancel() end) end
     local proxy = container:FindFirstChild("__gtProxy")
     if not proxy then
         proxy = Instance.new("NumberValue", container)
         proxy.Name = "__gtProxy"
-        proxy.Value = (groupState[container] and groupState[container].gt) or 0
     end
+    proxy.Value = st.gt or 0
     ti = ti or TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     local tw = TweenService:Create(proxy, ti, { Value = target })
     local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
         setGroupTransparency(container, proxy.Value)
     end)
+    st.tween = tw
+    st.conn = conn
     tw.Completed:Connect(function()
+        if st.tween ~= tw then return end
         if conn then conn:Disconnect() end
-        pcall(setGroupTransparency, container, target)
-        pcall(onDone or function() end)
+        st.conn = nil
+        st.tween = nil
+        setGroupTransparency(container, target)
+        if onDone then pcall(onDone) end
     end)
     tw:Play()
     return tw
@@ -588,8 +600,11 @@ local fadeGen = setmetatable({}, { __mode = "k" })
 
 fadeGroup = function(group, target, onDone)
     if not (group and group.Parent) then return end
-    fadeGen[group] = (fadeGen[group] or 0) + 1
-    return tweenGroup(group, target, nil, onDone)
+    local gen = (fadeGen[group] or 0) + 1
+    fadeGen[group] = gen
+    return tweenGroup(group, target, nil, function()
+        if fadeGen[group] == gen and onDone then onDone() end
+    end)
 end
 
 local function relayout(tab)
@@ -770,6 +785,7 @@ createShortcut = function(win, ctrl)
     silver.BackgroundTransparency = 1
     silver.BorderSizePixel = 0
     silver.Active = false
+    silver:SetAttribute("_skipFade", true)
     local silverCorner = Instance.new("UICorner", silver)
     silverCorner.CornerRadius = UDim.new(0, s(9))
     local silverGrad = Instance.new("UIGradient", silver)
@@ -798,6 +814,9 @@ createShortcut = function(win, ctrl)
     press.BorderSizePixel = 0
     press.Active = false
     press.ZIndex = ZBASE + 1
+    press:SetAttribute("_skipFade", true)
+    local pressCorner = Instance.new("UICorner", press)
+    pressCorner.CornerRadius = UDim.new(0, s(9))
 
     local hit = Instance.new("TextButton", sc)
     hit.Size = UDim2.fromScale(1, 1)
@@ -815,16 +834,24 @@ createShortcut = function(win, ctrl)
     syncShortcut(ctrl)
     fadeGroup(sc, 0)
 
-    local dragging, moved, startX, startY, originX, originY, moveConn, endConn
+    local dragging, moved, startX, startY, originX, originY, moveConn, endConn, haveStart
+    local scaleTween, pressTween
+    local function cancelPressTweens()
+        if scaleTween then pcall(function() scaleTween:Cancel() end) scaleTween = nil end
+        if pressTween then pcall(function() pressTween:Cancel() end) pressTween = nil end
+    end
     local function stopDrag(fire)
         if not dragging then return end
         dragging = false
         if moveConn then pcall(function() moveConn:Disconnect() end) moveConn = nil end
         if endConn then pcall(function() endConn:Disconnect() end) endConn = nil end
+        cancelPressTweens()
         if sc and sc.Parent then
             pcall(function()
-                TweenService:Create(uscale, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-                TweenService:Create(press, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
+                scaleTween = TweenService:Create(uscale, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
+                scaleTween:Play()
+                pressTween = TweenService:Create(press, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
+                pressTween:Play()
             end)
         end
         if fire and not moved then fireClick(ctrl) end
@@ -840,16 +867,21 @@ createShortcut = function(win, ctrl)
         if dragging then stopDrag(false) end
         dragging = true
         moved = false
+        haveStart = false
         startX, startY = inputPoint(dragStartInput)
         dragStartInput = nil
         originX, originY = sc.Position.X.Offset, sc.Position.Y.Offset
-        TweenService:Create(uscale, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 }):Play()
-        TweenService:Create(press, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.25 }):Play()
+        cancelPressTweens()
+        scaleTween = TweenService:Create(uscale, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 })
+        scaleTween:Play()
+        pressTween = TweenService:Create(press, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.25 })
+        pressTween:Play()
         moveConn = UserInputService.InputChanged:Connect(function(i)
             if not dragging then return end
             local t = i.UserInputType
             if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
                 local mx, my = inputPoint(i)
+                if not haveStart then startX, startY, haveStart = mx, my, true end
                 local dx, dy = mx - startX, my - startY
                 if math.abs(dx) + math.abs(dy) > 3 then moved = true end
                 sc.Position = UDim2.fromOffset(originX + dx, originY + dy)
@@ -1461,7 +1493,9 @@ closeDetail = function(win)
     if cont then
         cont.Visible = true
         setGroupTransparency(cont, 1)
-        fadeGroup(cont, 0)
+        fadeGroup(cont, 0, function()
+            if not win._detail then releaseAllPress(win) end
+        end)
     end
     win._detailContainer = nil
 end
