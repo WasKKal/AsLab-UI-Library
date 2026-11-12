@@ -6,13 +6,11 @@ local TextService = game:GetService("TextService")
 local Library = {}
 Library.__index = Library
 
--- 前置声明：这些函数在下方定义，但更早的 makeDropdown 等会引用它们
 local fadeGroup, setGroupTransparency, tweenGroup, showColorPanel
 
 local SCALE = 0.85
 local function s(n) return n * SCALE end
 
--- HSV 换算：不依赖 Color3:ToHSV / Color3.fromHSV，兼容性更好
 local function colorToHSV(c)
     local r, g, b = c.R, c.G, c.B
     local mx = math.max(r, g, b)
@@ -49,7 +47,6 @@ local function hsvToColor(h, sat, val)
     return Color3.new(r, g, b)
 end
 
--- 颜色判断：不只看 typeof（部分执行器/代理对象的 typeof 不可靠），同时做结构判断
 local function isColor3(c)
     if c == nil then return false end
     if typeof(c) == "Color3" then return true end
@@ -153,13 +150,9 @@ local CONFLICT_COLOR = Color3.fromRGB(255, 120, 60)
 local KEY_PLACEHOLDER = "···"
 local KEY_LISTENING = "Tap A Key"
 
--- ===== 国际化（i18n）=====
--- 语言列表：设置页语言下拉仅包含这两项。值即显示文本。
 AvailableLanguages = { "English", "中文" }
 Library.AvailableLanguages = AvailableLanguages
 
--- 内置英文 -> 中文 的默认翻译表（仅库内置 UI 文本）。
--- 用户输入的标题/文本若需翻译，通过 CreateWindow 的 Translations 参数注入。
 local DEFAULT_CN = {
     ["Settings"] = "设置",
     ["Window Size"] = "窗口大小",
@@ -195,7 +188,6 @@ local function translateKey(win, key)
     return DEFAULT_CN[key] or key
 end
 
--- 注册一个静态文本的翻译入口：初次赋值并登记到 win._i18n，语言切换时统一刷新。
 local function i18nText(win, obj, key)
     if not (win and obj) then
         if obj then obj.Text = tostring(key or "") end
@@ -206,7 +198,6 @@ local function i18nText(win, obj, key)
     table.insert(win._i18n, { obj = obj, key = key })
 end
 
--- 注册一个动态刷新函数：语言切换时重新执行（用于会变/拼装的文本）。
 local function i18nDynamic(win, fn)
     if not (win and fn) then return end
     win._i18nDynamic = win._i18nDynamic or {}
@@ -299,7 +290,6 @@ local function getHolder()
     local function attempt(fn)
         local ok, h = pcall(fn)
         if not ok or h == nil then return nil end
-        -- 兼容：部分执行器的容器代理对象 typeof 不返回 "Instance"，只要是可挂载的容器就接受
         local t = typeof(h)
         if t == "Instance" or type(h) == "table" or type(h) == "userdata" then
             return h
@@ -673,7 +663,6 @@ local function makeDropdown(parent, opts)
     end
 
     refreshHighlights = function()
-        -- 已选中的选项不出现在菜单内：隐藏该行并紧凑重排，菜单高度随可见项收缩
         local vis = 0
         for _, o in ipairs(optionButtons) do
             local isSel = (o.name == selected)
@@ -731,7 +720,6 @@ local function makeDropdown(parent, opts)
         if cb then pcall(cb, selected) end
     end
     function obj:Get() return selected end
-    -- 允许通过 SetValue 更改下拉内容
     obj.SetValue = obj.Set
     obj._closeMenu = closeMenu
     refreshHighlights()
@@ -911,10 +899,9 @@ fadeGroup = function(group, target, onDone)
     fadeGen[group] = gen
     return tweenGroup(group, target, nil, function()
         if fadeGen[group] == gen and onDone then onDone() end
-    end)
+    end, true)
 end
 
--- 统一的「颜色面板」显隐：进入淡出/淡入动画，避免直接 Visible 硬切
 showColorPanel = function(p, show)
     if not (p and p.Parent) then return end
     if show then
@@ -1083,7 +1070,6 @@ local function screenWidth(win)
         if a and a > 0 then sw = a end
     end)
     if sw <= 0 then
-        -- ScreenGui 尚未完成布局时回退到相机视口，避免靠右的快捷键落到屏幕外
         pcall(function() sw = workspace.CurrentCamera.ViewportSize.X end)
     end
     if not sw or sw <= 0 then sw = 1280 end
@@ -1246,7 +1232,6 @@ destroyShortcut = function(win, ctrl)
     ctrl._shortcut = nil
     local frame = sc.frame
     if frame and frame.Parent then
-        -- 先淡出再销毁，避免 Shortcut 文本（浮动药丸）瞬时消失而无渐隐动画
         fadeGroup(frame, 1, function()
             if frame and frame.Parent then frame:Destroy() end
         end)
@@ -1287,7 +1272,6 @@ buildDetail = function(win, ctrl)
     title.TextColor3 = Style.Text
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.BackgroundTransparency = 1
-    -- 详情标题动态翻译："<控件标题> - 设置"
     local function refreshDetailTitle()
         title.Text = translateKey(win, ctrl._opts.Title or "") .. " - " .. translateKey(win, "Setting")
     end
@@ -1503,7 +1487,6 @@ addDetailRow = function(win, ctrl, kind, opts)
             if opts.Callback then pcall(opts.Callback, value) end
             if obj._configValue then obj._configCurrent = value; syncConfigValue(obj) end
         end
-        -- 允许通过 SetValue 更改滑块内容
         obj.SetValue = obj.Set
         if opts.ConfigKey and opts.ConfigKey ~= "" then
             obj._configKey = opts.ConfigKey
@@ -1554,7 +1537,6 @@ addDetailRow = function(win, ctrl, kind, opts)
             if opts.Callback then pcall(opts.Callback, st) end
             if obj._configValue then obj._configCurrent = st; syncConfigValue(obj) end
         end
-        -- 允许通过 SetValue 更改子开关
         obj.SetValue = obj.Set
         if opts.ConfigKey and opts.ConfigKey ~= "" then
             obj._configKey = opts.ConfigKey
@@ -1831,7 +1813,6 @@ addDetailRow = function(win, ctrl, kind, opts)
                 if obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
             end
         end
-        -- 允许通过 SetValue 更改取色器内容
         obj.SetValue = obj.Set
         function obj:Get() return hsvToColor(h, sat, val) end
         if opts.ConfigKey and opts.ConfigKey ~= "" then
@@ -1900,7 +1881,6 @@ openDetail = function(win, ctrl)
     setGroupTransparency(layer, 1)
     fadeGroup(layer, 0)
     if win._scroller then win._scroller.CanvasPosition = Vector2.new(0, 0) end
-    -- 进入子选项页时，浮动 Shortcut 文本淡出并隐藏，避免它悬停在子选项页上方
     for _, sh in ipairs(win._shortcuts or {}) do
         if sh.frame and sh.frame.Parent then
             fadeGroup(sh.frame, 1, function() if sh.frame and sh.frame.Parent then sh.frame.Visible = false end end)
@@ -1934,7 +1914,6 @@ closeDetail = function(win)
             if not win._detail then releaseAllPress(win) end
         end)
     end
-    -- 退出子选项页时，浮动 Shortcut 文本淡入显现（带渐隐动画，而非瞬现）
     for _, sh in ipairs(win._shortcuts or {}) do
         if sh.frame and sh.frame.Parent then
             sh.frame.Visible = true
@@ -2007,7 +1986,6 @@ local function addControl(tab, kind, opts)
         end
         syncShortcut(ctrl)
     end
-    -- 允许通过 SetValue 更改主控件状态
     ctrl.SetValue = ctrl.Set
 
     if opts.ConfigKey and opts.ConfigKey ~= "" then
@@ -2570,20 +2548,38 @@ local function setMainContentVisible(win, show)
     if not main then return end
     if not show then
         local saved = {}
+        local fadeOutTi = TweenInfo.new(COLLAPSE_T * 0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
         for _, ch in ipairs(main:GetChildren()) do
             if ch:IsA("GuiObject") and ch.Visible then
                 saved[ch] = true
-                ch.Visible = false
+                tweenGroup(ch, 1, fadeOutTi, nil, true)
             end
         end
         win._collapseHidden = saved
+        task.delay(COLLAPSE_T + 0.02, function()
+            if not win._collapsed then return end
+            for ch in pairs(saved) do
+                if ch and ch.Parent then ch.Visible = false end
+            end
+        end)
     else
         local saved = win._collapseHidden
         if saved then
+            local fadeInTi = TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
             for ch in pairs(saved) do
-                if ch and ch.Parent then ch.Visible = true end
+                if ch and ch.Parent then
+                    ch.Visible = true
+                    setGroupTransparency(ch, 1, true)
+                    tweenGroup(ch, 0, fadeInTi, nil, true)
+                end
             end
             win._collapseHidden = nil
+            task.delay(0.3, function()
+                if win._collapsed then return end
+                if win._activeTab and win._activeTab > 0 and type(selectTab) == "function" then
+                    pcall(selectTab, win, win._activeTab)
+                end
+            end)
         end
     end
 end
@@ -2702,7 +2698,6 @@ local function expand(win)
     end)
 end
 
--- 语言变更监听：支持多个监听器（库内部的 applyLang 与外部回调互不覆盖）
 function Library:OnLanguageChanged(fn)
     if type(fn) ~= "function" then return self end
     self._languageListeners = self._languageListeners or {}
@@ -3080,23 +3075,18 @@ function Library.CreateWindow(opts)
     setmetatable(win, Library)
     Library._activeWindow = win
 
-    -- ===== i18n 初始化 =====
-    -- 默认语言由 CreateWindow 的 Language 选项控制，未提供时默认 English。
     win._language = opts.Language or "English"
     win._translations = opts.Translations or {}
     win._i18n = {}
     win._i18nDynamic = {}
     win:OnLanguageChanged(function() applyLang(win) end)
-    -- 注册窗口头部信息文本（此时 win 已可引用）
     if infoLabel then i18nText(win, infoLabel, InfoText) end
-    -- 初次应用（English 下为 no-op；若默认即为中文则立即翻译已注册的文本）
     applyLang(win)
 
     orbExt.Changed:Connect(function() applyOrbLayout(win) end)
     orbBlend.Changed:Connect(function() applyOrbLayout(win) end)
 
     local SET_Z = ZBASE + 60
-    -- 银白渐变（Settings 的 Slider 填充与 Apply 按钮共用）
     local function silverGradient(parent)
         local g = Instance.new("UIGradient", parent)
         g.Rotation = 90
@@ -3117,14 +3107,10 @@ function Library.CreateWindow(opts)
     overlay.ZIndex = SET_Z
     overlay.Visible = false
     overlay.ClipsDescendants = false
-    -- 阻止触摸穿透：Active=true 使得蒙版覆盖区域下的窗口控件无法接收点击/拖动
     overlay.Active = true
     local ovCorner = Instance.new("UICorner", overlay)
     ovCorner.CornerRadius = UDim.new(0, s(24))
 
-    -- 蓝色尺寸预览框：与窗口同级挂在 gui，避免被 main 子树裁剪；
-    -- 以「窗口中心」为锚点向四周放大（非右上展开）。ZIndex 低于 Settings 面板，
-    -- 因此不会遮挡面板，又高于被遮罩的窗口内容而保持可见。
     local preview = Instance.new("Frame", gui)
     preview.Name = "SizePreview"
     preview.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -3143,7 +3129,6 @@ function Library.CreateWindow(opts)
     pvStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 
     local pW, pH = s(320), s(244)
-    -- 面板直接挂在 gui（与窗口、预览同级），ZIndex 高于预览：保证不被蓝色预览框遮挡。
     local panel = makeGlass(gui, {
         Name = "SettingsPanel",
         Size = UDim2.fromOffset(pW, pH),
@@ -3155,8 +3140,6 @@ function Library.CreateWindow(opts)
     })
     panel.ZIndex = ZBASE + 52
     panel.ClipsDescendants = false
-    -- 子选项 Settings 面板默认隐藏：仅在点击 monitor-cog 时显示，
-    -- 避免 Ui 刚加载时就出现且无法关闭。
     panel.Visible = false
 
     local titleLbl = Instance.new("TextLabel", panel)
@@ -3289,7 +3272,6 @@ function Library.CreateWindow(opts)
         sVal.Text = tostring(math.floor(previewScale * 100 + 0.5)) .. "%"
     end
 
-    -- 平滑过渡预览框：以窗口中心为锚点向四周扩展/缩小，而非瞬间跳变
     local previewTweens = {}
     local function tweenPreview(nw, nh, cx, cy)
         preview.Visible = true
@@ -3308,7 +3290,6 @@ function Library.CreateWindow(opts)
         local nw, nh = win._sizeX * k, win._sizeY * k
         local curW, curH = win._sizeX * (win._uiScale or 1), win._sizeY * (win._uiScale or 1)
         local vw, vh = viewport()
-        -- 以「当前窗口中心」为锚点向四周放大，而不是向右下角展开
         local cx = main.Position.X.Offset + curW / 2
         local cy = main.Position.Y.Offset + curH / 2
         cx = math.clamp(cx, nw / 2, math.max(nw / 2, vw - nw / 2))
@@ -3344,18 +3325,35 @@ function Library.CreateWindow(opts)
         end
     end)
 
-    local function closeSettings()
+    local settingsGen = 0
+    local function closeSettings(instant)
         win._settingsOpen = false
-        preview.Visible = false
-        overlay.Visible = false
-        panel.Visible = false
+        settingsGen = settingsGen + 1
+        local gen = settingsGen
         if langDropdown and langDropdown._closeMenu then pcall(langDropdown._closeMenu) end
+        if instant then
+            preview.Visible = false
+            overlay.Visible = false
+            panel.Visible = false
+            return
+        end
+        local ti = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        tweenGroup(preview, 1, ti, function()
+            if settingsGen == gen and not win._settingsOpen then preview.Visible = false end
+        end, true)
+        tweenGroup(overlay, 1, ti, function()
+            if settingsGen == gen and not win._settingsOpen then overlay.Visible = false end
+        end, true)
+        tweenGroup(panel, 1, ti, function()
+            if settingsGen == gen and not win._settingsOpen then panel.Visible = false end
+        end, true)
     end
     win._closeSettings = closeSettings
 
     local function openSettings()
         if win._settingsOpen then return end
         win._settingsOpen = true
+        settingsGen = settingsGen + 1
         previewScale = win._uiScale or 1
         settingsLanguage = win._language or "English"
         refreshScaleSlider()
@@ -3363,28 +3361,37 @@ function Library.CreateWindow(opts)
         overlay.Visible = true
         panel.Visible = true
         preview.Visible = false
+        setGroupTransparency(overlay, 1, true)
+        setGroupTransparency(panel, 1, true)
+        local ti = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        tweenGroup(overlay, 0, ti, nil, true)
+        tweenGroup(panel, 0, ti, nil, true)
     end
     win._openSettings = openSettings
 
     local function applySettings()
         local k = previewScale
+        local kOld = mainScale.Scale or 1
         win._uiScale = k
         win._visW = win._sizeX * k
         win._visH = win._sizeY * k
         win._settingsScale = k
         local ti = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+
+        local w, h = win._sizeX, win._sizeY
+        local cx = main.Position.X.Offset + w * kOld / 2
+        local cy = main.Position.Y.Offset + h * kOld / 2
+        local nx = cx - w * k / 2
+        local ny = cy - h * k / 2
+        local vw, vh = viewport()
+        nx = math.clamp(nx, 0, math.max(0, vw - w * k))
+        ny = math.clamp(ny, 0, math.max(0, vh - h * k))
+
         win._mainScaleTween = TweenService:Create(mainScale, ti, { Scale = k })
         win._mainScaleTween:Play()
-        local vw, vh = viewport()
-        local gx = math.clamp(main.Position.X.Offset, 0, math.max(0, vw - win._visW))
-        local gy = math.clamp(main.Position.Y.Offset, 0, math.max(0, vh - win._visH))
-        if math.abs(gx - main.Position.X.Offset) > 0.5 or math.abs(gy - main.Position.Y.Offset) > 0.5 then
-            win._posTween = TweenService:Create(main, ti, { Position = UDim2.fromOffset(gx, gy) })
-            win._posTween:Play()
-        else
-            main.Position = UDim2.fromOffset(gx, gy)
-        end
-        win._mainPosBeforeCollapse = UDim2.fromOffset(gx, gy)
+        win._posTween = TweenService:Create(main, ti, { Position = UDim2.fromOffset(nx, ny) })
+        win._posTween:Play()
+        win._mainPosBeforeCollapse = UDim2.fromOffset(nx, ny)
         win._settingsLanguage = settingsLanguage
         win:SetLanguage(settingsLanguage)
         pcall(function() win:SaveConfig() end)
@@ -3404,9 +3411,6 @@ function Library.CreateWindow(opts)
         markSkip(preview)
     end
 
-    -- ===== 关闭二次确认对话框 =====
-    -- 点击关闭按钮后不直接销毁，而是弹出一个黑色（带圆角）蒙版 + 与 Settings 一致的面板，
-    -- 中心显示确认文字（含中文版本），由「确认 / 取消」两个按钮决定结果。
     local confirmOverlay = Instance.new("Frame", gui)
     confirmOverlay.Name = "CloseConfirmOverlay"
     confirmOverlay.Size = UDim2.fromScale(1, 1)
@@ -3417,7 +3421,6 @@ function Library.CreateWindow(opts)
     confirmOverlay.ZIndex = ZBASE + 51
     confirmOverlay.Visible = false
     confirmOverlay.ClipsDescendants = false
-    -- 阻止触摸穿透：蒙版覆盖区下方的窗口控件无法接收点击/拖动
     confirmOverlay.Active = true
     local cOvCorner = Instance.new("UICorner", confirmOverlay)
     cOvCorner.CornerRadius = UDim.new(0, s(24))
@@ -3496,15 +3499,39 @@ function Library.CreateWindow(opts)
     cancelBtnLbl.ZIndex = ZBASE + 56
     i18nText(win, cancelBtnLbl, "Cancel")
 
+    local confirmGen = 0
     local function closeConfirm()
-        confirmOverlay.Visible = false
-        confirmPanel.Visible = false
+        confirmGen = confirmGen + 1
+        local gen = confirmGen
+        local ti = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        tweenGroup(confirmOverlay, 1, ti, function()
+            if confirmGen == gen then confirmOverlay.Visible = false end
+        end, true)
+        tweenGroup(confirmPanel, 1, ti, function()
+            if confirmGen == gen then confirmPanel.Visible = false end
+        end, true)
     end
     local function openConfirm()
+        confirmGen = confirmGen + 1
         confirmOverlay.Visible = true
         confirmPanel.Visible = true
+        setGroupTransparency(confirmOverlay, 1, true)
+        setGroupTransparency(confirmPanel, 1, true)
+        local ti = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        tweenGroup(confirmOverlay, 0, ti, nil, true)
+        tweenGroup(confirmPanel, 0, ti, nil, true)
     end
-    confirmBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+    confirmBtn.MouseButton1Click:Connect(function()
+        local done = false
+        local function finish()
+            if done then return end
+            done = true
+            if gui and gui.Parent then gui:Destroy() end
+        end
+        local ti = TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        tweenGroup(gui, 1, ti, finish, true)
+        task.delay(0.34, finish)
+    end)
     cancelBtn.MouseButton1Click:Connect(closeConfirm)
 
     closeBtn.MouseButton1Click:Connect(openConfirm)
@@ -3691,11 +3718,6 @@ function Library.CreateWindow(opts)
     end
 
     if background and background:IsA("ImageLabel") and type(bgUrl) == "string" and bgUrl ~= "" then
-        -- ===== 背景图本地缓存 =====
-        -- 缓存文件：AsLab/<Folder>/background.png
-        -- 缓存标记：AsLab/<Folder>/background.url（记录下载时的链接）
-        -- 规则：本地已有缓存且链接未变 -> 直接使用本地资源，不重复下载；
-        --       链接更换或本地无缓存 -> 才发起网络请求并覆盖缓存。
         local bgPath = AssetDir .. "/background.png"
         local bgUrlPath = AssetDir .. "/background.url"
 
@@ -3716,14 +3738,13 @@ function Library.CreateWindow(opts)
         end)() or false
 
         if hasCache and cachedUrl == bgUrl then
-            -- 缓存命中：优先使用本地资源，直接显示（无网络下载）
             local asset
             pcall(function() asset = getcustomasset(bgPath) end)
             if asset then
                 background.Image = asset
                 revealMain()
             else
-                hasCache = false -- 资源读取失败则回退到下载流程
+                hasCache = false
             end
         end
 
@@ -3736,7 +3757,6 @@ function Library.CreateWindow(opts)
                         makefolder(RootFolder)
                         makefolder(AssetDir)
                         writefile(bgPath, data)
-                        -- 写入链接标记，供下次启动判断是否需要重新下载
                         writefile(bgUrlPath, bgUrl)
                     end)
                     local asset
@@ -3775,10 +3795,6 @@ function Library:_fadeIn()
     if not (main and main.Parent and scale and scale.Parent) then return end
     local targetScale = self._uiScale or 1
 
-    -- ===== 入场动画（重做）=====
-    -- 1) 整体由 0.88 缩放弹起（Back 轻微过冲，落点回正）；
-    -- 2) 窗口整体透明淡入（强制包含 _skipFade 节点，保证整窗一致）；
-    -- 3) 同时从下方 s(14) 的位移上滑归位，形成「上浮 + 展开 + 淡入」的合成入场。
     local basePos = main.Position
     local baseY = basePos.Y.Offset
     self._entranceActive = true
@@ -3798,12 +3814,9 @@ function Library:_fadeIn()
     self._fadePosTween = twPos
     twPos:Play()
 
-    -- 透明度：从全隐到全显（0.42s，Quint Out），与缩放在前段同步、后段先落定
     self._fadeGroupTween = tweenGroup(main, 0,
         TweenInfo.new(0.42, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), nil, true)
 
-    -- 收尾：用缩放缓动的 Completed 作为结束信号（按真实播放时长，不受调度抖动影响），
-    -- 另加 1.2s 兜底，避免 Completed 因取消/异常未触发导致窗口停在小比例或半透明状态。
     local finalize = function()
         if self._fadeGen ~= gen then return end
         self._entranceActive = false
@@ -3812,8 +3825,6 @@ function Library:_fadeIn()
             main.Position = UDim2.new(basePos.X.Scale, basePos.X.Offset, basePos.Y.Scale, baseY)
             setGroupTransparency(main, 0, true)
         end
-        -- 入场强制淡入会临时改写 _skipFade 节点的透明度（如 TabSel 选中底），
-        -- 结束时重新刷新当前选中页的选中态，避免高亮残留半透明。
         if self._activeTab and self._activeTab > 0 and type(selectTab) == "function" then
             pcall(selectTab, self, self._activeTab)
         end
@@ -3856,8 +3867,6 @@ function Library:_finishFadeIn()
     end
     if self._main and self._main.Parent and self._mainScale then
         self._mainScale.Scale = self._uiScale or 1
-        -- 只在本窗「入场动画进行中」才需要强制还原透明度；
-        -- 否则会把 _skipFade 节点（如 TabSel）被 tween 控制的透明度覆盖回旧值。
         if wasEntrance then
             setGroupTransparency(self._main, 0, true)
         end
