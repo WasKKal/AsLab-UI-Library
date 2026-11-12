@@ -195,6 +195,23 @@ ESP:AddToggle({ Title = "Draw Skeleton", Default = false, Callback = function(v)
     refreshEspVisual()
 end })
 
+-- ===== 新增 Dropdown 子控件：用于控制语言 =====
+Win:OnLanguageChanged(function(v)
+    print("[Settings] Language applied:", v)
+end)
+
+local LangSetting = TabVisual:AddToggle({ Title = "Language", Icon = "globe", Default = false })
+LangSetting:AddDropdown({
+    Title = "Language",
+    Options = { "English", "简体中文", "日本語", "Español" },
+    Default = "English",
+    ConfigKey = "language",
+    Callback = function(v)
+        print("Language selected:", v)
+        Win:SetLanguage(v)
+    end,
+})
+
 local TabNotify = Win:AddTab("Notify", "bell")
 
 local autoNotifyOn = false
