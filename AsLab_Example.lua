@@ -6,12 +6,46 @@ local Win = Library.CreateWindow({
     TitleIcon = "layout-grid",
     Size = UDim2.fromOffset(540, 400),
     Info = "Info Bar",
+    -- 默认语言：不传 Language 时库内默认 English；传入 "中文" 即默认中文。
+    Language = "English",
     Background = "https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/assets/aslab_wallpaper.png",
     -- Folder 签名：在根目录 AsLab 下创建名为 Example 的子文件夹。
     -- 背景图与配置都存放于 AsLab/Example/ ：
     --   AsLab/Example/background.png
     --   AsLab/Example/config.json
     Folder = "Example",
+    -- 允许外部为「库内置文本」之外的自定义控件标题注入翻译条目。
+    -- 例如把示例中的 "Auto Save" 在中文下显示为「自动保存」。
+    Translations = {
+        ["中文"] = {
+            ["Auto Save"] = "自动保存",
+            ["Refresh"] = "刷新",
+            ["Notifications"] = "通知",
+            ["Run"] = "运行",
+            ["Debug"] = "调试",
+            ["Boost"] = "加速",
+            ["Speed"] = "速度",
+            ["Dark Mode"] = "深色模式",
+            ["Theme"] = "主题",
+            ["Reset"] = "重置",
+            ["Performance"] = "性能",
+            ["Cleanup"] = "清理",
+            ["About"] = "关于",
+            ["ESP"] = "透视",
+            ["Highlight"] = "高亮",
+            ["Highlight Color"] = "高亮颜色",
+            ["Draw Skeleton"] = "绘制骨架",
+            ["Language"] = "语言",
+            ["General"] = "通用",
+            ["Appearance"] = "外观",
+            ["System"] = "系统",
+            ["Notify"] = "通知中心",
+            ["Auto Notify (1s)"] = "自动通知 (1秒)",
+            ["Single"] = "单条",
+            ["Stack"] = "堆叠",
+            ["Long Text"] = "长文本",
+        },
+    },
 })
 
 local TabGeneral = Win:AddTab("General", "settings")
@@ -70,7 +104,7 @@ local Boost = TabGeneral:AddToggle({ Title = "Boost", Icon = "gauge", Default = 
     applyBoost()
 end })
 
-Boost:AddSlider({ Title = "Speed", Min = 16, Max = 200, Default = 50, Step = 1, ConfigKey = "boost_speed", Callback = function(v)
+local BoostSpeed = Boost:AddSlider({ Title = "Speed", Min = 16, Max = 200, Default = 50, Step = 1, ConfigKey = "boost_speed", Callback = function(v)
     boostSpeed = v
     if boostOn then applyBoost() end
 end })
@@ -185,7 +219,7 @@ ESP:AddToggle({ Title = "Highlight", Default = true, ConfigKey = "esp_highlight"
     refreshEspVisual()
 end })
 
-ESP:AddColorPicker({ Title = "Highlight Color", Default = Color3.fromRGB(255, 96, 96), ConfigKey = "esp_color", Callback = function(c)
+local ESPColor = ESP:AddColorPicker({ Title = "Highlight Color", Default = Color3.fromRGB(255, 96, 96), ConfigKey = "esp_color", Callback = function(c)
     espColor = c
     refreshEspVisual()
 end })
@@ -201,9 +235,10 @@ Win:OnLanguageChanged(function(v)
 end)
 
 local LangSetting = TabVisual:AddToggle({ Title = "Language", Icon = "globe", Default = false })
-LangSetting:AddDropdown({
+local LangDropdown = LangSetting:AddDropdown({
     Title = "Language",
-    Options = { "English", "简体中文", "日本語", "Español" },
+    -- 语言下拉仅包含 English 与 中文
+    Options = { "English", "中文" },
     Default = "English",
     ConfigKey = "language",
     Callback = function(v)
@@ -261,4 +296,17 @@ end)
 Win:SaveConfig()
 Win:LoadConfig()
 
+-- ===== SetValue 演示（默认不自动执行，避免覆盖你自己保存的配置）=====
+-- Slider / Dropdown / ColorPicker / Toggle（主控件与子控件）都支持 SetValue / Set：
+--   BoostSpeed:SetValue(80)                              -- 子滑块
+--   LangDropdown:SetValue("中文")                        -- 子下拉（会触发 Callback -> 切语言）
+--   ESPColor:SetValue(Color3.fromRGB(255, 170, 60))      -- 子取色器
+--   ESP:SetValue(true)                                   -- 主开关
+--   tg:SetValue(false)                                   -- 子开关
+-- 赋值会触发对应 Callback，并同步写入 config.json。
+
 print("AsLab UI loaded, window fading in...")
+
+-- 语言切换示例（外部也可主动调用）：
+-- Win:SetLanguage("中文")
+-- Win:GetLanguage() --> "English" / "中文"
