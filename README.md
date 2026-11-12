@@ -40,27 +40,61 @@ local Window = Library.CreateWindow({
     Size = UDim2.fromOffset(520, 360),
 })
 
--- 添加标签页
-local Tab = Window:AddTab("设置")
+-- 添加标签页（图标为 Lucide 名称）
+local Tab = Window:AddTab("设置", "settings")
 
--- 即时模式添加控件
-Tab:AddToggle({ Text = "启用功能", Default = true, Callback = function(v) print("开关:", v) end })
-Tab:AddSlider({ Text = "音量", Min = 0, Max = 100, Default = 50, Callback = function(v) print("音量:", v) end })
-Tab:AddButton({ Text = "应用", Callback = function() print("已应用") end })
+-- 主控件用 Title 而非 Text
+Tab:AddToggle({ Title = "启用功能", Default = true, Callback = function(v) print("开关:", v) end })
+Tab:AddButton({ Title = "应用", Callback = function() print("已应用") end })
+
+-- 子控件（滑块等）需挂在某主控件上：长按主开关进入详情页即可看到
+local Feature = Tab:AddToggle({ Title = "音效", Default = true })
+local Vol = Feature:AddSlider({ Title = "音量", Min = 0, Max = 100, Default = 50, Callback = function(v) print("音量:", v) end })
+Vol:SetValue(80)  -- 运行时动态改变滑块值（自动 clamp 到 0~100）
 ```
 
 ## 🗂️ 控件一览
 
-| 控件 | 说明 |
+**主层级（Tab 上直接添加）**
+
+| 方法 | 说明 |
 | --- | --- |
-| `CreateWindow` | 创建主窗口 |
-| `AddTab` | 添加标签页 |
-| `AddButton` | 按钮 |
-| `AddToggle` | 开关 |
-| `AddSlider` | 滑块 |
-| `AddDropdown` | 下拉选择 |
-| `AddTextBox` | 文本框 |
-| `AddParagraph` | 文本段落 |
+| `Win:AddTab(name, icon)` | 添加标签页 |
+| `Tab:AddToggle(opts)` | 主开关（可长按进入详情页） |
+| `Tab:AddButton(opts)` | 主按钮 |
+
+**子选项（长按主开关进入详情页后添加，挂在某个 `Ctrl` 上）**
+
+| 方法 | 说明 |
+| --- | --- |
+| `Ctrl:AddSlider(opts)` | 滑块 —— 返回值 `.Set(v)` / `.SetValue(v)` 可在运行时动态改变数值（自动 clamp 到 Min/Max） |
+| `Ctrl:AddToggle(opts)` | 子开关 |
+| `Ctrl:AddButton(opts)` | 子按钮 |
+| `Ctrl:AddColorPicker(opts)` | 取色器 |
+| `Ctrl:AddDropdown(opts)` | 下拉选择（支持 `SetOptions` / `AddOption` / `RemoveOption` 动态增删） |
+| `Ctrl:AddParagraph(opts)` | 文本段落（照抄 DynamicCow 的 SubParagraph，标题 + 说明 + 可选图标，高度随文字自动变化） |
+
+> Slider 值可动态改变：子滑块对象返回后调用 `.Set(数值)` 或 `.SetValue(数值)` 即可实时更新滑条、数值与配置。
+
+### 📝 段落控件 `Ctrl:AddParagraph`
+
+用于详情页内的静态说明块，签名与 DynamicCow 一致：
+
+```lua
+local P = SomeToggle:AddParagraph({
+    Title = "提示",                              -- 粗体标题
+    Info  = "可以很长，会自动换行并重新计算高度。", -- 说明文字
+    Icon  = "info",                             -- 可选 Lucide 图标（左侧）
+})
+-- 运行时动态更新
+P:SetTitle("新提示")
+P:SetInfo("替换后的说明文字，控件会重新测量高度并回流排版")
+P:SetIcon("alert-triangle")     -- 换图标
+P:SetIconColor(Color3.new(1, 1, 1))
+P:SetBackColor(Color3.fromRGB(34, 34, 42))
+P:GetTitle()  -- 读回标题
+P:GetInfo()   -- 读回说明
+```
 
 ## 💾 配置（多配置槽）
 
