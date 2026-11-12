@@ -1,278 +1,348 @@
+--[[
+    AsLab UI · 全 API 示例
+    ------------------------------------------------------------
+    覆盖内容：
+      Library.PreloadLucide / GetHolderSource / CreateWindow
+      Win:AddTab / ShowNotify / SetLanguage / GetLanguage / OnLanguageChanged / SaveConfig / LoadConfig
+      Tab:AddToggle / AddButton
+      Ctrl:AddSlider / AddToggle / AddButton / AddColorPicker / AddDropdown
+      Ctrl:Set / SetValue，Dropdown:Get / GetOptions / SetOptions / AddOption / RemoveOption
+      详情页内置：Board-Key（按键绑定）、AddShortcut（快捷图标创建 / 拖动 / 删除）
+      配置持久化 ConfigKey、窗口设置（比例 / 语言）、关闭二次确认、通知胶囊
+    说明：动态 Dropdown 需要 AsLabUILibrary 2026-11 之后的版本（Dropdown:SetOptions 等）。
+]]
+
 local Library = loadstring(game:HttpGet("https://ghfast.top/https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/AsLabUILibrary.lua"))()
 Library.PreloadLucide()
 
+-- ============================================================
+-- 1. 创建窗口（演示 CreateWindow 的全部参数）
+-- ============================================================
 local Win = Library.CreateWindow({
-    Title = "Im Title",
+    Title = "AsLab Full API",
     TitleIcon = "layout-grid",
-    Size = UDim2.fromOffset(540, 400),
-    Info = "Info Bar",
-    -- 默认语言：不传 Language 时库内默认 English；传入 "中文" 即默认中文。
-    Language = "English",
+    Info = "Every API in one place",
+    Size = UDim2.fromOffset(560, 420),
+    -- 背景图留空时使用库内置渐变；填写 URL 会下载到 AsLab/<Folder>/background.png
     Background = "https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/assets/aslab_wallpaper.png",
-    -- Folder 签名：在根目录 AsLab 下创建名为 Example 的子文件夹。
-    -- 背景图与配置都存放于 AsLab/Example/ ：
-    --   AsLab/Example/background.png
-    --   AsLab/Example/config.json
-    Folder = "Example",
-    -- 允许外部为「库内置文本」之外的自定义控件标题注入翻译条目。
-    -- 例如把示例中的 "Auto Save" 在中文下显示为「自动保存」。
+    -- 默认语言：不传为 English；传 "中文" 则首帧即中文
+    Language = "English",
+    -- 配置与背景落在 AsLab/FullDemo/ 下：background.png / config.json
+    Folder = "FullDemo",
+    -- 自定义标题的翻译表（库内置文案已自带中英）
     Translations = {
         ["中文"] = {
-            ["Auto Save"] = "自动保存",
-            ["Refresh"] = "刷新",
-            ["Notifications"] = "通知",
-            ["Run"] = "运行",
-            ["Debug"] = "调试",
+            ["Profile"] = "配置档案",
+            ["Preset"] = "预设",
+            ["Target"] = "目标",
+            ["Player"] = "玩家",
+            ["Tags"] = "标签",
+            ["Tag"] = "标签项",
+            ["Add Tag"] = "添加标签",
+            ["Remove Tag"] = "移除标签",
+            ["Reset Tags"] = "重置标签",
+            ["Refresh Players"] = "刷新玩家",
             ["Boost"] = "加速",
             ["Speed"] = "速度",
-            ["Dark Mode"] = "深色模式",
+            ["Jump Power"] = "跳跃力",
+            ["Auto Jump"] = "自动跳跃",
+            ["Reset Speed"] = "重置速度",
+            ["Auto Save"] = "自动保存",
+            ["Refresh"] = "刷新",
+            ["Debug"] = "调试",
             ["Theme"] = "主题",
-            ["Reset"] = "重置",
-            ["Performance"] = "性能",
-            ["Cleanup"] = "清理",
-            ["About"] = "关于",
+            ["Accent"] = "强调色",
+            ["Blur"] = "模糊",
+            ["Glow"] = "发光",
+            ["Apply Theme"] = "应用主题",
+            ["Reset Visuals"] = "重置外观",
             ["ESP"] = "透视",
             ["Highlight"] = "高亮",
+            ["Skeleton"] = "骨架",
             ["Highlight Color"] = "高亮颜色",
-            ["Draw Skeleton"] = "绘制骨架",
-            ["Language"] = "语言",
-            ["General"] = "通用",
-            ["Appearance"] = "外观",
-            ["System"] = "系统",
-            ["Notify"] = "通知中心",
-            ["Auto Notify (1s)"] = "自动通知 (1秒)",
-            ["Single"] = "单条",
-            ["Stack"] = "堆叠",
+            ["Distance"] = "距离",
+            ["Performance"] = "性能",
+            ["Cleanup"] = "清理",
+            ["Reset Everything"] = "全部重置",
+            ["Single"] = "单条通知",
+            ["Stack"] = "堆叠通知",
             ["Long Text"] = "长文本",
+            ["Auto Notify (1s)"] = "自动通知 (1秒)",
+            ["Language"] = "语言",
+            ["Save Config"] = "保存配置",
+            ["General"] = "通用",
+            ["Visuals"] = "视觉",
+            ["Dynamic"] = "动态",
+            ["System"] = "系统",
+            ["Notify"] = "通知",
         },
     },
 })
 
+-- 窗口对象提供的只读信息
+print("[AsLab] holder =", Library.GetHolderSource(), "| language =", Win:GetLanguage())
+
+-- ============================================================
+-- 2. 标签页（图标使用 Lucide 名称）
+-- ============================================================
 local TabGeneral = Win:AddTab("General", "settings")
-local TabVisual = Win:AddTab("Appearance", "palette")
+local TabVisual = Win:AddTab("Visuals", "palette")
+local TabDynamic = Win:AddTab("Dynamic", "list-checks")
 local TabSystem = Win:AddTab("System", "cpu")
+local TabNotify = Win:AddTab("Notify", "bell")
 
-TabGeneral:AddToggle({ Title = "Auto Save", Icon = "save", Default = true, ConfigKey = "auto_save", Callback = function(v)
-    print("Auto Save:", v)
-end })
-
-TabGeneral:AddButton({ Title = "Refresh", Icon = "refresh-cw", Callback = function()
-    print("Refreshed")
-end })
-
-TabGeneral:AddToggle({ Title = "Notifications", Icon = "bell", Default = false, Callback = function(v)
-    print("Notifications:", v)
-end })
-
-TabGeneral:AddButton({ Title = "Run", Callback = function()
-    print("Run button clicked")
-end })
-
-TabGeneral:AddToggle({ Title = "Debug", Default = false, Callback = function(v)
-    print("Debug:", v)
-end })
-
--- ===== Boost：实际修改本地角色移动速度 =====
+-- ============================================================
+-- 3. 通用页：主开关 + 详情页（Slider / Toggle / Button）
+-- ============================================================
 local PlayersSvc = game:GetService("Players")
-local lp = PlayersSvc.LocalPlayer
 
-local boostOn = false
-local boostSpeed = 50  -- 由下方 Speed 滑块实时控制
+local boostOn, boostSpeed, jumpPower = false, 50, 50
 
-local function getHumanoid()
-    if not lp then return nil end
-    local ok, char = pcall(function() return lp.Character end)
-    if not ok or not char then return nil end
-    return char:FindFirstChildOfClass("Humanoid")
-end
-
-local function applyBoost()
-    local hum = getHumanoid()
-    if not hum then return end
-    pcall(function() hum.WalkSpeed = boostOn and boostSpeed or 16 end)
-end
-
-if lp then
-    lp.CharacterAdded:Connect(function()
-        task.wait(0.1)
-        applyBoost()
-    end)
-end
-
-local Boost = TabGeneral:AddToggle({ Title = "Boost", Icon = "gauge", Default = false, Callback = function(v)
-    boostOn = v
-    applyBoost()
-end })
-
-local BoostSpeed = Boost:AddSlider({ Title = "Speed", Min = 16, Max = 200, Default = 50, Step = 1, ConfigKey = "boost_speed", Callback = function(v)
-    boostSpeed = v
-    if boostOn then applyBoost() end
-end })
-
-TabVisual:AddToggle({ Title = "Dark Mode", Icon = "moon", Default = true, Callback = function(v)
-    print("Dark Mode:", v)
-end })
-
-TabVisual:AddButton({ Title = "Theme", Icon = "brush", Callback = function()
-    print("Opening theme")
-end })
-
-TabVisual:AddButton({ Title = "Reset", Icon = "rotate-ccw", Callback = function()
-    print("Appearance reset")
-end })
-
-TabSystem:AddToggle({ Title = "Performance", Icon = "gauge", Default = false, Callback = function(v)
-    print("Performance:", v)
-end })
-
-TabSystem:AddButton({ Title = "Cleanup", Icon = "trash-2", Callback = function()
-    print("Cleaned up")
-end })
-
-TabSystem:AddButton({ Title = "About", Icon = "help-circle", Callback = function()
-    print("About AsLab UI")
-end })
-
--- ===== ESP：为所有玩家角色添加 Highlight 实际高亮 =====
-local espOn = false
-local espHighlightOn = true
-local espSkeleton = false
-local espColor = Color3.fromRGB(255, 96, 96)
-local espHighlights = {}
-
-local function clearEsp()
-    for plr, hl in pairs(espHighlights) do pcall(function() hl:Destroy() end) end
-    espHighlights = {}
-end
-
-local function refreshEspVisual()
-    for plr, hl in pairs(espHighlights) do
-        pcall(function()
-            hl.FillColor = espColor
-            hl.OutlineColor = espColor
-            hl.Enabled = espHighlightOn
-            hl.FillTransparency = espSkeleton and 0.5 or 1
-            hl.OutlineTransparency = 0
-        end)
-    end
-end
-
-local function addEspFor(plr)
-    if not plr or plr == lp then return end
-    if espHighlights[plr] then return end
-    local function attach()
-        local char = plr.Character
-        if not char then return end
-        local hl = Instance.new("Highlight")
-        hl.Name = "AsLabESP"
-        hl.FillColor = espColor
-        hl.OutlineColor = espColor
-        hl.FillTransparency = espSkeleton and 0.5 or 1
-        hl.OutlineTransparency = 0
-        hl.Enabled = espHighlightOn
-        hl.Adornee = char
-        hl.Parent = char
-        espHighlights[plr] = hl
-    end
-    pcall(attach)
+local function applyCharacter()
+    local ok, lp = pcall(function() return PlayersSvc.LocalPlayer end)
+    if not ok or not lp then return end
+    local ok2, char = pcall(function() return lp.Character end)
+    if not ok2 or not char then return end
     pcall(function()
-        plr.CharacterAdded:Connect(function(c)
-            task.wait(0.1)
-            if espOn then
-                pcall(function()
-                    local hl = Instance.new("Highlight")
-                    hl.Name = "AsLabESP"
-                    hl.FillColor = espColor; hl.OutlineColor = espColor
-                    hl.FillTransparency = espSkeleton and 0.5 or 1
-                    hl.OutlineTransparency = 0; hl.Enabled = espHighlightOn
-                    hl.Adornee = c; hl.Parent = c
-                    espHighlights[plr] = hl
-                end)
-            end
-        end)
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        hum.WalkSpeed = boostOn and boostSpeed or 16
+        hum.JumpPower = jumpPower
     end)
-end
-
-local function buildEsp()
-    clearEsp()
-    if not espOn then return end
-    local ok, list = pcall(function() return PlayersSvc:GetPlayers() end)
-    if ok and list then for _, plr in ipairs(list) do addEspFor(plr) end end
 end
 
 pcall(function()
-    PlayersSvc.PlayerAdded:Connect(function(plr)
-        if espOn then addEspFor(plr) end
-    end)
-    PlayersSvc.PlayerRemoving:Connect(function(plr)
-        if espHighlights[plr] then pcall(function() espHighlights[plr]:Destroy() end) espHighlights[plr] = nil end
+    PlayersSvc.LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(0.2)
+        applyCharacter()
     end)
 end)
 
-local ESP = TabSystem:AddToggle({ Title = "ESP", Icon = "eye", Default = false, Callback = function(v)
-    espOn = v
-    if v then buildEsp() else clearEsp() end
-end })
-
-ESP:AddToggle({ Title = "Highlight", Default = true, ConfigKey = "esp_highlight", Callback = function(v)
-    espHighlightOn = v
-    refreshEspVisual()
-end })
-
-local ESPColor = ESP:AddColorPicker({ Title = "Highlight Color", Default = Color3.fromRGB(255, 96, 96), ConfigKey = "esp_color", Callback = function(c)
-    espColor = c
-    refreshEspVisual()
-end })
-
-ESP:AddToggle({ Title = "Draw Skeleton", Default = false, Callback = function(v)
-    espSkeleton = v
-    refreshEspVisual()
-end })
-
--- ===== 新增 Dropdown 子控件：用于控制语言 =====
-Win:OnLanguageChanged(function(v)
-    print("[Settings] Language applied:", v)
-end)
-
-local LangSetting = TabVisual:AddToggle({ Title = "Language", Icon = "globe", Default = false })
-local LangDropdown = LangSetting:AddDropdown({
-    Title = "Language",
-    -- 语言下拉仅包含 English 与 中文
-    Options = { "English", "中文" },
-    Default = "English",
-    ConfigKey = "language",
+-- 带子选项的主开关：Callback、ConfigKey、Icon 齐全
+local Boost = TabGeneral:AddToggle({
+    Title = "Boost",
+    Icon = "gauge",
+    Default = false,
+    ConfigKey = "boost_enabled",
     Callback = function(v)
-        print("Language selected:", v)
-        Win:SetLanguage(v)
+        boostOn = v
+        applyCharacter()
     end,
 })
 
-local TabNotify = Win:AddTab("Notify", "bell")
+-- 子滑块：Min / Max / Default / Step / ConfigKey / Callback
+local BoostSpeed = Boost:AddSlider({
+    Title = "Speed", Min = 16, Max = 200, Default = 50, Step = 1,
+    ConfigKey = "boost_speed",
+    Callback = function(v)
+        boostSpeed = v
+        if boostOn then applyCharacter() end
+    end,
+})
 
-local autoNotifyOn = false
-local autoNotifyGen = 0
-local autoNotifySeq = 0
+Boost:AddSlider({
+    Title = "Jump Power", Min = 50, Max = 300, Default = 50, Step = 5,
+    Callback = function(v) jumpPower = v; applyCharacter() end,
+})
 
-TabNotify:AddToggle({ Title = "Auto Notify (1s)", Icon = "bell", Default = false, Callback = function(v)
-    autoNotifyOn = v
-    autoNotifyGen = autoNotifyGen + 1
-    local myGen = autoNotifyGen
-    if not v then return end
-    task.spawn(function()
-        while autoNotifyOn and autoNotifyGen == myGen do
-            autoNotifySeq = autoNotifySeq + 1
-            Win:ShowNotify({
-                Title = "Live #" .. autoNotifySeq,
-                Info = "Auto #" .. autoNotifySeq .. " every 1s - minimize to see the capsule",
-                Time = 2,
-            })
-            task.wait(1)
-        end
-    end)
+local autoJumpOn = false
+
+local AutoJump = Boost:AddToggle({
+    Title = "Auto Jump", Default = false,
+    Callback = function(v)
+        autoJumpOn = v
+        if not v then return end
+        task.spawn(function()
+            while autoJumpOn do
+                pcall(function()
+                    local hum = PlayersSvc.LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                    if hum then hum.Jump = true end
+                end)
+                task.wait(0.6)
+            end
+        end)
+    end,
+})
+
+Boost:AddButton({
+    Title = "Reset Speed",
+    Callback = function()
+        boostSpeed, jumpPower = 50, 50
+        BoostSpeed:SetValue(50)          -- 子控件 SetValue
+        print("[AsLab] boost reset")
+    end,
+})
+
+TabGeneral:AddToggle({ Title = "Auto Save", Icon = "save", Default = true, ConfigKey = "auto_save" })
+TabGeneral:AddToggle({ Title = "Debug", Icon = "bug", Default = false, ConfigKey = "debug",
+    Callback = function(v) print("[AsLab] debug:", v) end })
+TabGeneral:AddButton({ Title = "Refresh", Icon = "refresh-cw", Callback = function()
+    Win:ShowNotify({ Title = "Refresh", Info = "Reloaded module list", Time = 3 })
 end })
 
+-- ============================================================
+-- 4. 视觉页：ColorPicker / Slider / Toggle / Button 组合
+-- ============================================================
+local accent = Color3.fromRGB(120, 170, 255)
+
+local Theme = TabVisual:AddToggle({ Title = "Theme", Icon = "brush", Default = false })
+
+local Accent = Theme:AddColorPicker({
+    Title = "Accent", Default = accent, ConfigKey = "accent",
+    Callback = function(c) accent = c; print("[AsLab] accent", c) end,
+})
+
+Theme:AddSlider({ Title = "Blur", Min = 0, Max = 24, Default = 8, Step = 1, ConfigKey = "blur" })
+Theme:AddToggle({ Title = "Glow", Default = true, ConfigKey = "glow" })
+Theme:AddButton({ Title = "Apply Theme", Callback = function()
+    Win:ShowNotify({ Title = "Theme", Info = "Accent applied to 12 controls", Time = 3 })
+end })
+
+TabVisual:AddButton({ Title = "Reset Visuals", Icon = "rotate-ccw", Callback = function()
+    Accent:SetValue(Color3.fromRGB(120, 170, 255))   -- ColorPicker SetValue
+end })
+
+-- ============================================================
+-- 5. 动态页：运行时增删 Dropdown 选项
+-- ============================================================
+-- 5.1 联动：Profile 改变时，Preset 的选项整体替换
+local presetsByProfile = {
+    Default = { "Balanced", "Performance", "Quality" },
+    PvP = { "Aggressive", "Defensive", "Sniper", "Support" },
+    Farming = { "AFK", "Loop", "Collect" },
+}
+
+local Profile, Preset
+
+local ProfileToggle = TabDynamic:AddToggle({ Title = "Profile", Icon = "users", Default = false })
+
+Preset = ProfileToggle:AddDropdown({
+    Title = "Preset",
+    Options = presetsByProfile.Default,
+    Default = "Balanced",
+    ConfigKey = "preset",
+    Callback = function(v) print("[AsLab] preset ->", v) end,
+})
+
+Profile = ProfileToggle:AddDropdown({
+    Title = "Profile",
+    Options = { "Default", "PvP", "Farming" },
+    Default = "Default",
+    ConfigKey = "profile",
+    Callback = function(v)
+        -- SetOptions：整体替换选项列表；原先选中的值不存在时自动回落到第一项
+        Preset:SetOptions(presetsByProfile[v] or presetsByProfile.Default)
+        print("[AsLab] profile ->", v, "presets:", #Preset:GetOptions())
+    end,
+})
+
+-- 5.2 玩家列表：从 Players 服务实时读取，进出房间自动同步
+local TargetToggle = TabDynamic:AddToggle({ Title = "Target", Icon = "target", Default = false })
+
+local PlayerDropdown = TargetToggle:AddDropdown({
+    Title = "Player",
+    Options = { "None" },
+    Default = "None",
+    Callback = function(v)
+        if v ~= "None" then
+            Win:ShowNotify({ Title = "Target", Info = "Locked on " .. v, Time = 2 })
+        end
+    end,
+})
+
+local function playerNames()
+    local list = {}
+    pcall(function()
+        for _, plr in ipairs(PlayersSvc:GetPlayers()) do
+            if plr ~= PlayersSvc.LocalPlayer then list[#list + 1] = plr.Name end
+        end
+    end)
+    table.sort(list)
+    if #list == 0 then list[1] = "None" end
+    return list
+end
+
+local function refreshPlayers()
+    local list = playerNames()
+    PlayerDropdown:SetOptions(list)
+    print("[AsLab] players refreshed:", table.concat(list, ", "))
+end
+
+refreshPlayers()
+pcall(function()
+    PlayersSvc.PlayerAdded:Connect(refreshPlayers)
+    PlayersSvc.PlayerRemoving:Connect(refreshPlayers)
+end)
+
+-- 5.3 单条增删：AddOption / RemoveOption
+local TagsToggle = TabDynamic:AddToggle({ Title = "Tags", Icon = "list-checks", Default = false })
+
+local TagDropdown = TagsToggle:AddDropdown({
+    Title = "Tag",
+    Options = { "alpha", "beta" },
+    Default = "alpha",
+    Callback = function(v) print("[AsLab] tag ->", v) end,
+})
+
+local tagSeq = 2
+
+TabDynamic:AddButton({ Title = "Add Tag", Icon = "plus", Callback = function()
+    tagSeq = tagSeq + 1
+    TagDropdown:AddOption("tag-" .. tagSeq)
+    Win:ShowNotify({ Title = "AddOption", Info = "tag-" .. tagSeq .. " added · " .. #TagDropdown:GetOptions() .. " total", Time = 2 })
+end })
+
+TabDynamic:AddButton({ Title = "Remove Tag", Icon = "minus", Callback = function()
+    local list = TagDropdown:GetOptions()
+    if #list <= 1 then
+        Win:ShowNotify({ Title = "RemoveOption", Info = "Keep at least one option", Time = 2 })
+        return
+    end
+    local last = list[#list]
+    TagDropdown:RemoveOption(last)
+    Win:ShowNotify({ Title = "RemoveOption", Info = last .. " removed", Time = 2 })
+end })
+
+TabDynamic:AddButton({ Title = "Reset Tags", Icon = "rotate-ccw", Callback = function()
+    TagDropdown:SetOptions({ "alpha", "beta" })
+    tagSeq = 2
+end })
+
+TabDynamic:AddButton({ Title = "Refresh Players", Icon = "refresh-cw", Callback = refreshPlayers })
+
+-- ============================================================
+-- 6. 系统页：更多子控件 + 主开关批量 SetValue
+-- ============================================================
+local ESP = TabSystem:AddToggle({ Title = "ESP", Icon = "eye", Default = false, ConfigKey = "esp" })
+
+local Highlight = ESP:AddToggle({ Title = "Highlight", Default = true, ConfigKey = "esp_highlight" })
+local Skeleton = ESP:AddToggle({ Title = "Skeleton", Default = false, ConfigKey = "esp_skeleton" })
+
+local ESPColor = ESP:AddColorPicker({
+    Title = "Highlight Color", Default = Color3.fromRGB(255, 96, 96), ConfigKey = "esp_color",
+    Callback = function(c) print("[AsLab] esp color", c) end,
+})
+
+ESP:AddSlider({ Title = "Distance", Min = 0, Max = 2000, Default = 1000, Step = 50, ConfigKey = "esp_distance" })
+
+TabSystem:AddToggle({ Title = "Performance", Icon = "gauge", Default = false, ConfigKey = "performance" })
+
+-- 主控件 SetValue：开关与子控件可以一起批量改
+TabSystem:AddButton({ Title = "Reset Everything", Icon = "trash-2", Callback = function()
+    ESP:SetValue(false)                 -- 主 Toggle
+    Highlight:SetValue(true)            -- 子 Toggle
+    Skeleton:SetValue(false)
+    ESPColor:SetValue(Color3.fromRGB(255, 96, 96))
+    Boost:SetValue(false)
+    Profile:SetValue("Default")         -- Dropdown（会触发联动刷新 Preset）
+    Win:ShowNotify({ Title = "Reset", Info = "All controls restored to defaults", Time = 3 })
+end })
+
+-- ============================================================
+-- 7. 通知页：ShowNotify + 语言切换
+-- ============================================================
 TabNotify:AddButton({ Title = "Single", Icon = "bell", Callback = function()
-    Win:ShowNotify({ Title = "Hello", Info = "This is a short message.", Time = 4 })
+    Win:ShowNotify({ Title = "Hello", Info = "A short toast.", Time = 4 })
 end })
 
 TabNotify:AddButton({ Title = "Stack", Icon = "layers", Callback = function()
@@ -285,29 +355,58 @@ TabNotify:AddButton({ Title = "Long Text", Icon = "align-left", Callback = funct
     Win:ShowNotify({ Title = "Wrapped Title That Is Also Quite Long Indeed", Info = "The info line wraps automatically when it grows beyond twenty five characters, and the toast grows taller to fit.", Time = 7 })
 end })
 
-game:GetService("UserInputService").InputBegan:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.N then
-        Win:ShowNotify({ Title = "Key N", Info = "Minimize the window and press N to see the orb capsule", Time = 5 })
-    end
+local autoNotifyOn, autoNotifyGen, autoSeq = false, 0, 0
+
+TabNotify:AddToggle({ Title = "Auto Notify (1s)", Icon = "bell", Default = false, Callback = function(v)
+    autoNotifyOn = v
+    autoNotifyGen = autoNotifyGen + 1
+    local gen = autoNotifyGen
+    if not v then return end
+    task.spawn(function()
+        while autoNotifyOn and autoNotifyGen == gen do
+            autoSeq = autoSeq + 1
+            Win:ShowNotify({ Title = "Live #" .. autoSeq, Info = "Minimize to see the orb capsule", Time = 2 })
+            task.wait(1)
+        end
+    end)
+end })
+
+local LangToggle = TabNotify:AddToggle({ Title = "Language", Icon = "globe", Default = false })
+LangToggle:AddDropdown({
+    Title = "Language",
+    Options = { "English", "中文" },
+    Default = "English",
+    ConfigKey = "language",
+    Callback = function(v) Win:SetLanguage(v) end,   -- 立即切换整套 UI 文案
+})
+
+TabNotify:AddButton({ Title = "Save Config", Icon = "save", Callback = function()
+    Win:SaveConfig()
+    Win:ShowNotify({ Title = "Config", Info = "Saved to AsLab/FullDemo/config.json", Time = 3 })
+end })
+
+-- 语言变化回调（外部同步自己的文案时使用）
+Win:OnLanguageChanged(function(v)
+    print("[AsLab] language changed ->", v)
 end)
 
--- 演示配置持久化：读取 AsLab/Example/config.json
--- 除带 ConfigKey 的控件外，快捷键（Board-Key）与快捷图标的位置/开关状态也会一并保存与恢复
--- 快捷键设置、清除以及快捷图标的创建/删除/拖拽会立即写盘；控件值在 Settings 里点 Apply 时写盘
--- 启动时只调用 LoadConfig（先 SaveConfig 会用默认值覆盖上次保存的内容）
+-- ============================================================
+-- 8. 键盘：N 键弹通知；绑定键位请在任意控件详情页用 Board-Key
+-- ============================================================
+pcall(function()
+    game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.KeyCode == Enum.KeyCode.N then
+            Win:ShowNotify({ Title = "Key N", Info = "Minimize the window and press N again", Time = 5 })
+        elseif input.KeyCode == Enum.KeyCode.L then
+            Win:SetLanguage(Win:GetLanguage() == "English" and "中文" or "English")
+        end
+    end)
+end)
+
+-- ============================================================
+-- 9. 读取上次保存的配置（必须在所有控件建好之后调用）
+-- ============================================================
 Win:LoadConfig()
 
--- ===== SetValue 演示（默认不自动执行，避免覆盖你自己保存的配置）=====
--- Slider / Dropdown / ColorPicker / Toggle（主控件与子控件）都支持 SetValue / Set：
---   BoostSpeed:SetValue(80)                              -- 子滑块
---   LangDropdown:SetValue("中文")                        -- 子下拉（会触发 Callback -> 切语言）
---   ESPColor:SetValue(Color3.fromRGB(255, 170, 60))      -- 子取色器
---   ESP:SetValue(true)                                   -- 主开关
---   tg:SetValue(false)                                   -- 子开关
--- 赋值会触发对应 Callback，并同步写入 config.json。
-
-print("AsLab UI loaded, window fading in...")
-
--- 语言切换示例（外部也可主动调用）：
--- Win:SetLanguage("中文")
--- Win:GetLanguage() --> "English" / "中文"
+print("AsLab full example ready · language =", Win:GetLanguage())

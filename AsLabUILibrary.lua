@@ -694,6 +694,8 @@ local function makeDropdown(parent, opts)
     local menuOpen = false
     local outsideConn = nil
 
+    local host = parent
+    local hostZ = nil
     local capsule = Instance.new("TextButton", parent)
     capsule.Name = "DropdownCapsule"
     capsule.Size = UDim2.fromOffset(capW, capH)
@@ -757,42 +759,57 @@ local function makeDropdown(parent, opts)
     menuStroke.Transparency = 0.45
     menuStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 
-    for i, name in ipairs(options) do
-        local txt = tostring(name)
-        local ob = Instance.new("TextButton", menu)
-        ob.Name = "DdOption"
-        ob.Size = UDim2.new(1, -s(8), 0, optH)
-        ob.Position = UDim2.fromOffset(s(4), s(4) + (i - 1) * optH)
-        ob.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-        ob.BackgroundTransparency = 1
-        ob.BorderSizePixel = 0
-        ob.Text = ""
-        ob.AutoButtonColor = false
-        ob.ZIndex = z + 11
-        local oc = Instance.new("UICorner", ob)
-        oc.CornerRadius = UDim.new(0, s(6))
-        local tx = Instance.new("TextLabel", ob)
-        tx.Name = "DdOptText"
-        tx.Size = UDim2.fromScale(1, 1)
-        tx.BackgroundTransparency = 1
-        tx.Font = Style.Font
-        tx.TextSize = s(12)
-        tx.TextColor3 = Color3.fromRGB(230, 230, 235)
-        tx.TextXAlignment = Enum.TextXAlignment.Center
-        tx.TextYAlignment = Enum.TextYAlignment.Center
-        tx.Text = txt
-        tx.ZIndex = z + 12
-        tx:SetAttribute("_skipFade", true)
-        ob.MouseButton1Click:Connect(function()
-            if txt == selected then return end
-            selected = txt
-            capLabel.Text = txt
-            refreshHighlights()
-            closeMenu()
-            if cb then pcall(cb, txt) end
-            if obj and obj._configValue then obj._configCurrent = txt; syncConfigValue(obj) end
-        end)
-        optionButtons[i] = { btn = ob, tx = tx, name = txt }
+    local function buildOptions(list)
+        for _, o in ipairs(optionButtons) do
+            if o.btn and o.btn.Parent then o.btn:Destroy() end
+        end
+        optionButtons = {}
+        local valid = false
+        for _, v in ipairs(list) do if v == selected then valid = true break end end
+        if not valid then selected = list[1] or "" end
+        capLabel.Text = tostring(selected)
+        for i, name in ipairs(list) do
+            local txt = tostring(name)
+            local ob = Instance.new("TextButton", menu)
+            ob.Name = "DdOption"
+            ob.Size = UDim2.new(1, -s(8), 0, optH)
+            ob.Position = UDim2.fromOffset(s(4), s(4) + (i - 1) * optH)
+            ob.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+            ob.BackgroundTransparency = 1
+            ob.BorderSizePixel = 0
+            ob.Text = ""
+            ob.AutoButtonColor = false
+            ob.ZIndex = z + 11
+            local oc = Instance.new("UICorner", ob)
+            oc.CornerRadius = UDim.new(0, s(6))
+            local tx = Instance.new("TextLabel", ob)
+            tx.Name = "DdOptText"
+            tx.Size = UDim2.fromScale(1, 1)
+            tx.BackgroundTransparency = 1
+            tx.Font = Style.Font
+            tx.TextSize = s(12)
+            tx.TextColor3 = Color3.fromRGB(230, 230, 235)
+            tx.TextXAlignment = Enum.TextXAlignment.Center
+            tx.TextYAlignment = Enum.TextYAlignment.Center
+            tx.Text = txt
+            tx.ZIndex = z + 12
+            tx:SetAttribute("_skipFade", true)
+            ob.MouseButton1Click:Connect(function()
+                if txt == selected then return end
+                selected = txt
+                capLabel.Text = txt
+                refreshHighlights()
+                closeMenu()
+                if cb then pcall(cb, txt) end
+                if obj and obj._configValue then obj._configCurrent = txt; syncConfigValue(obj) end
+            end)
+            optionButtons[i] = { btn = ob, tx = tx, name = txt }
+        end
+        refreshHighlights()
+        if obj then
+            obj.Value = selected
+            if obj._configValue then obj._configCurrent = selected; syncConfigValue(obj) end
+        end
     end
 
     refreshHighlights = function()
@@ -823,6 +840,7 @@ local function makeDropdown(parent, opts)
     closeMenu = function()
         if not menuOpen then return end
         menuOpen = false
+        if host and hostZ ~= nil then host.ZIndex = hostZ; hostZ = nil end
         fadeGroup(menu, 1, function() if not menuOpen then menu.Visible = false end end)
         if outsideConn then pcall(function() outsideConn:Disconnect() end) outsideConn = nil end
     end
@@ -830,6 +848,7 @@ local function makeDropdown(parent, opts)
     capsule.MouseButton1Click:Connect(function()
         if menuOpen then closeMenu() return end
         menuOpen = true
+        if host then hostZ = host.ZIndex; host.ZIndex = 200 end
         menu.Visible = true
         setGroupTransparency(menu, 1)
         fadeGroup(menu, 0)
@@ -853,9 +872,43 @@ local function makeDropdown(parent, opts)
         if cb then pcall(cb, selected) end
     end
     function obj:Get() return selected end
+    function obj:GetOptions()
+        local list = {}
+        for _, v in ipairs(options) do list[#list + 1] = v end
+        return list
+    end
+    function obj:SetOptions(list)
+        local clean = {}
+        if type(list) == "table" then
+            for _, v in ipairs(list) do
+                if v ~= nil then clean[#clean + 1] = tostring(v) end
+            end
+        end
+        options = clean
+        obj.Options = options
+        buildOptions(options)
+    end
+    function obj:AddOption(name)
+        if name == nil then return end
+        local txt = tostring(name)
+        for _, v in ipairs(options) do if v == txt then return end end
+        local list = obj:GetOptions()
+        list[#list + 1] = txt
+        obj:SetOptions(list)
+    end
+    function obj:RemoveOption(name)
+        local txt = tostring(name or "")
+        local list, hit = {}, false
+        for _, v in ipairs(options) do
+            if v == txt then hit = true else list[#list + 1] = v end
+        end
+        if not hit then return end
+        obj:SetOptions(list)
+    end
     obj.SetValue = obj.Set
     obj._closeMenu = closeMenu
-    refreshHighlights()
+    obj.Options = options
+    buildOptions(options)
     return obj
 end
 
@@ -3207,8 +3260,8 @@ function Library.CreateWindow(opts)
 
     local controlRegion = Instance.new("Frame", main)
     controlRegion.Name = "ControlRegion"
-    controlRegion.Size = UDim2.new(1, -(PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN), 1, -(s(8) + FOOTER_H + PAD))
-    controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, s(8))
+    controlRegion.Size = UDim2.new(1, -(PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN), 1, -(bodyY + s(8) + FOOTER_H + PAD))
+    controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, bodyY + s(8))
     controlRegion.BackgroundTransparency = 1
     controlRegion.BorderSizePixel = 0
     controlRegion.ClipsDescendants = false
@@ -3384,7 +3437,7 @@ function Library.CreateWindow(opts)
         _settingsScale = 1,
         _settingsLanguage = "English",
         _controlW = Size.X.Offset - (PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN),
-        _viewH = Size.Y.Offset - HEADER_H,
+        _viewH = Size.Y.Offset - (HEADER_H + s(8) + FOOTER_H + PAD),
         _shortcuts = {},
         _listening = nil,
         _detail = nil,
