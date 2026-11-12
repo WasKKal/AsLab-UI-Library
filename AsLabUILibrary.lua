@@ -1385,6 +1385,7 @@ local function attachClickFx(btn, opts)
     local tint = opts.tint or Color3.new(1, 1, 1)
     local peak = opts.peak or 0.82
     local radius = opts.radius or UDim.new(0, s(8))
+    local ripple = (opts.ripple ~= false)   -- 默认有波纹；ripple=false 时仅保留按压高亮
     local ov = ensureFxLayer(btn, tint, radius)
 
     local sc = btn:FindFirstChildOfClass("UIScale")
@@ -1395,12 +1396,19 @@ local function attachClickFx(btn, opts)
     local baseScale = sc.Scale or 1
     if baseScale <= 0 then baseScale = 1 end
     local downT, upT, scT
+    local endConn
 
     local function dismiss(tw)
         if tw then pcall(function() tw:Cancel() end) end
         return nil
     end
+    local function releaseEndConn()
+        if endConn then pcall(function() endConn:Disconnect() end) endConn = nil end
+    end
 
+    -- 前向声明：保证 pressDown 内 InputEnded 闭包能正确捕获本地的 pressUp
+    -- （Luau 不会把“后声明”的 local 捕获为 upvalue，而会回退到 nil 的全局引用）
+    local pressUp
     local function pressDown()
         downT = dismiss(downT)
         upT = dismiss(upT)
@@ -1413,9 +1421,19 @@ local function attachClickFx(btn, opts)
             Scale = baseScale * 0.96,
         })
         scT:Play()
+        -- 全局兜底：在窗口/元素外松开时也能释放按压反馈，避免按压卡住
+        releaseEndConn()
+        endConn = UserInputService.InputEnded:Connect(function(i)
+            local t = i and i.UserInputType
+            local n = t and t.Name or ""
+            if n == "MouseButton1" or n == "Touch" then
+                pressUp(false)
+            end
+        end)
     end
 
-    local function pressUp(clicked)
+    pressUp = function(clicked)
+        releaseEndConn()
         downT = dismiss(downT)
         upT = dismiss(upT)
         upT = TweenService:Create(ov, TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -1427,7 +1445,7 @@ local function attachClickFx(btn, opts)
             Scale = baseScale,
         })
         scT:Play()
-        if clicked then clickRipple(btn, tint, radius) end
+        if clicked and ripple then clickRipple(btn, tint, radius) end
     end
 
     btn.MouseButton1Down:Connect(pressDown)
@@ -1679,7 +1697,6 @@ createShortcut = function(win, ctrl)
             end)
         end
         if fire and not moved then
-            clickRipple(hit, Color3.new(1, 1, 1), UDim.new(0, s(10)))
             fireClick(ctrl)
         end
         if moved and not win._loadingConfig then pcall(function() win:SaveConfig() end) end
@@ -2656,12 +2673,46 @@ local function bindPress(ctrl)
     local win = ctrl._tab._win
     ctrl._pressed = false
     ctrl._holdGen = 0
+    local endConn
+    local function releaseConn()
+        if endConn then pcall(function() endConn:Disconnect() end) endConn = nil end
+    end
+    local function doClick()
+        if not ctrl._pressed then return end
+        ctrl._pressed = false
+        ctrl._holdGen = ctrl._holdGen + 1
+        releaseConn()
+        if ctrl._held then ctrl._held = false return end
+        setPressed(ctrl, false)
+        fireClick(ctrl)
+    end
+    local function cancelPress()
+        if not ctrl._pressed then return end
+        ctrl._pressed = false
+        ctrl._holdGen = ctrl._holdGen + 1
+        releaseConn()
+        ctrl._held = false
+        setPressed(ctrl, false)
+    end
     block.MouseButton1Down:Connect(function()
         ctrl._pressed = true
         ctrl._held = false
         setPressed(ctrl, true)
         ctrl._holdGen = ctrl._holdGen + 1
         local gen = ctrl._holdGen
+        releaseConn()
+        -- 全局兜底：在窗口/元素外松开时也能释放按压反馈，避免按压卡住
+        endConn = UserInputService.InputEnded:Connect(function(i)
+            local t = i and i.UserInputType
+            local n = t and t.Name or ""
+            if n == "MouseButton1" or n == "Touch" then
+                if ctrl._holdGen == gen and ctrl._pressed then
+                    task.delay(0, function()
+                        if ctrl._holdGen == gen and ctrl._pressed then cancelPress() end
+                    end)
+                end
+            end
+        end)
         task.delay(HOLD_TIME, function()
             if ctrl._holdGen == gen and ctrl._pressed and ctrl._block.Parent then
                 ctrl._held = true
@@ -2670,21 +2721,8 @@ local function bindPress(ctrl)
             end
         end)
     end)
-    block.MouseButton1Up:Connect(function()
-        if not ctrl._pressed then return end
-        ctrl._pressed = false
-        ctrl._holdGen = ctrl._holdGen + 1
-        if ctrl._held then ctrl._held = false return end
-        setPressed(ctrl, false)
-        fireClick(ctrl)
-    end)
-    block.MouseLeave:Connect(function()
-        if ctrl._pressed then
-            ctrl._pressed = false
-            ctrl._holdGen = ctrl._holdGen + 1
-            setPressed(ctrl, false)
-        end
-    end)
+    block.MouseButton1Up:Connect(doClick)
+    block.MouseLeave:Connect(cancelPress)
 end
 
 local function addControl(tab, kind, opts)
@@ -3765,7 +3803,7 @@ function Library.CreateWindow(opts)
     orbHit.Text = ""
     orbHit.AutoButtonColor = false
     orbHit.ZIndex = ZBASE + 52
-    attachClickFx(orbHit, { tint = Color3.new(1, 1, 1), peak = 0.72, radius = UDim.new(1, 0) })
+    attachClickFx(orbHit, { tint = Color3.new(1, 1, 1), peak = 0.72, radius = UDim.new(1, 0), ripple = false })
 
     local orbExt = Instance.new("NumberValue", gui)
     orbExt.Name = "OrbExt"
