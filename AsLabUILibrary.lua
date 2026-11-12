@@ -926,6 +926,52 @@ local function updateCanvas(win)
 end
 
 local groupState = setmetatable({}, { __mode = "k" })
+local nominal = setmetatable({}, { __mode = "k" })
+
+local function noteNode(node)
+    if not node then return end
+    local t = nominal[node]
+    if not t then t = {}; nominal[node] = t end
+    if pcall(function() return node.BackgroundTransparency end) and t.bg == nil then
+        t.bg = node.BackgroundTransparency
+    end
+    if node.Name == "Press" then t.bg = 1 end
+    if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
+        if t.tt == nil then t.tt = node.TextTransparency end
+        if t.ts == nil then t.ts = node.TextStrokeTransparency end
+    end
+    if node:IsA("ImageLabel") or node:IsA("ImageButton") or node:IsA("VideoFrame") then
+        if t.it == nil then t.it = node.ImageTransparency end
+    end
+end
+
+local noteTree
+
+local function noteStroke(stroke)
+    if not stroke then return end
+    local t = nominal[stroke]
+    if not t then t = {}; nominal[stroke] = t end
+    if t.st == nil then t.st = stroke.Transparency end
+end
+
+noteTree = function(root)
+    if not root then return end
+    if root:IsA("GuiObject") then noteNode(root) end
+    for _, ch in ipairs(root:GetChildren()) do
+        if ch:IsA("UIStroke") then
+            noteStroke(ch)
+        else
+            noteTree(ch)
+        end
+    end
+end
+
+local function setNominal(node, key, val)
+    if not (node and val ~= nil) then return end
+    local t = nominal[node]
+    if not t then t = {}; nominal[node] = t end
+    t[key] = val
+end
 
 setGroupTransparency = function(container, t, force)
     if not (container and container.Parent) then return end
@@ -946,32 +992,31 @@ setGroupTransparency = function(container, t, force)
         end
     end
     collect(container)
+    local function track(node, key, cur)
+        local b = base[node]
+        if not b then b = {}; base[node] = b end
+        local nb = nominal[node]
+        if nb and nb[key] ~= nil then
+            b[key] = nb[key]
+        elseif b[key] == nil then
+            b[key] = cur
+        end
+        return b[key]
+    end
     for _, node in ipairs(nodes) do
         local skip = false
         pcall(function() skip = (node:GetAttribute("_skipFade") == true) end)
         if force then skip = false end
         if not skip then
             if pcall(function() return node.BackgroundTransparency end) then
-                local cur = node.BackgroundTransparency
-                local b = base[node]
-                if not b then b = {}; base[node] = b end
-                if b.bg == nil then b.bg = cur end
-                node.BackgroundTransparency = 1 - (1 - b.bg) * mult
+                node.BackgroundTransparency = 1 - (1 - track(node, "bg", node.BackgroundTransparency)) * mult
             end
             if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
-                local b = base[node]; if not b then b = {}; base[node] = b end
-                local cur = node.TextTransparency
-                if b.tt == nil then b.tt = cur end
-                node.TextTransparency = 1 - (1 - b.tt) * mult
-                local cs = node.TextStrokeTransparency
-                if b.ts == nil then b.ts = cs end
-                node.TextStrokeTransparency = 1 - (1 - b.ts) * mult
+                node.TextTransparency = 1 - (1 - track(node, "tt", node.TextTransparency)) * mult
+                node.TextStrokeTransparency = 1 - (1 - track(node, "ts", node.TextStrokeTransparency)) * mult
             end
             if node:IsA("ImageLabel") or node:IsA("ImageButton") or node:IsA("VideoFrame") then
-                local b = base[node]; if not b then b = {}; base[node] = b end
-                local cur = node.ImageTransparency
-                if b.it == nil then b.it = cur end
-                node.ImageTransparency = 1 - (1 - b.it) * mult
+                node.ImageTransparency = 1 - (1 - track(node, "it", node.ImageTransparency)) * mult
             end
         end
         for _, ch in ipairs(node:GetChildren()) do
@@ -979,10 +1024,7 @@ setGroupTransparency = function(container, t, force)
             pcall(function() chSkip = (ch:GetAttribute("_skipFade") == true) end)
             if force then chSkip = false end
             if ch:IsA("UIStroke") and not chSkip then
-                local b = base[ch]; if not b then b = {}; base[ch] = b end
-                local cur = ch.Transparency
-                if b.st == nil then b.st = cur end
-                ch.Transparency = 1 - (1 - b.st) * mult
+                ch.Transparency = 1 - (1 - track(ch, "st", ch.Transparency)) * mult
             end
         end
     end
@@ -1069,6 +1111,7 @@ local function refreshToggle(ctrl, animate)
         if ti then TweenService:Create(obj, ti, { [prop] = val }):Play() else obj[prop] = val end
     end
     tw(ctrl._silver, "BackgroundTransparency", bgT)
+    setNominal(ctrl._silver, "bg", bgT)
     if ctrl._icon then tw(ctrl._icon, "ImageColor3", fg) end
     if ctrl._title then tw(ctrl._title, "TextColor3", fg) end
 end
@@ -1127,6 +1170,7 @@ local function syncShortcut(ctrl)
     if not (sc and sc.silver and sc.silver.Parent) then return end
     local on = (ctrl._kind == "Toggle" and ctrl._state)
     sc.silver.BackgroundTransparency = on and Style.SilverTransparency or 1
+    setNominal(sc.silver, "bg", on and Style.SilverTransparency or 1)
     if sc.label and sc.label.Parent then
         sc.label.TextColor3 = on and Style.ActiveText or Style.Text
     end
@@ -1264,6 +1308,7 @@ createShortcut = function(win, ctrl)
     label.ZIndex = ZBASE + 2
 
     local press = Instance.new("Frame", sc)
+    press.Name = "Press"
     press.Size = UDim2.fromScale(1, 1)
     press.BackgroundColor3 = Color3.new(0, 0, 0)
     press.BackgroundTransparency = 1
@@ -1287,6 +1332,7 @@ createShortcut = function(win, ctrl)
     sc.Position = UDim2.fromOffset(screenWidth(win) - w / 2 - s(16), slotY(win, h))
     ctrl._shortcut = { frame = sc, silver = silver, label = label }
     table.insert(win._shortcuts, ctrl._shortcut)
+    noteTree(sc)
     syncShortcut(ctrl)
     fadeGroup(sc, 0)
     if ctrl._refreshAdd then pcall(ctrl._refreshAdd) end
@@ -1480,6 +1526,7 @@ buildDetail = function(win, ctrl)
     refreshAddState()
     ctrl._refreshAdd = refreshAddState
     ctrl._detailCount = 2
+    noteTree(layer)
     updateCanvas(win)
 end
 
@@ -1690,6 +1737,7 @@ addDetailRow = function(win, ctrl, kind, opts)
         local box, blabel, hit = makeBox(row, s(90), opts.Text or "Run")
         i18nText(win, blabel, opts.Text or "Run")
         local press = Instance.new("Frame", box)
+        press.Name = "Press"
         press.Size = UDim2.fromScale(1, 1)
         press.BackgroundColor3 = Color3.new(0, 0, 0)
         press.BackgroundTransparency = 1
@@ -2249,6 +2297,7 @@ local function addControl(tab, kind, opts)
     function ctrl:AddDropdown(o) return own(addDetailRow(tab._win, ctrl, "Dropdown", o)) end
 
     table.insert(tab._controls, ctrl)
+    noteTree(block)
     relayout(tab)
     return ctrl
 end
@@ -2271,6 +2320,8 @@ function selectTab(win, activeIdx)
             t._iconTween:Play()
         end
         local sel = t._sel
+        setNominal(sel, "bg", active and Cfg.TabSelFillTransparency or 1)
+        setNominal(t._selStroke, "st", active and 0 or 1)
         if active then
             if not sel.Visible then
                 sel.BackgroundTransparency = 1
@@ -3639,6 +3690,7 @@ function Library.CreateWindow(opts)
     confirmBtn.BackgroundColor3 = Color3.new(1, 1, 1)
     confirmBtn.BackgroundTransparency = Style.SilverTransparency
     confirmBtn.BorderSizePixel = 0
+    confirmBtn.Text = ""
     confirmBtn.AutoButtonColor = false
     confirmBtn.ZIndex = ZBASE + 55
     silverGradient(confirmBtn)
@@ -3662,6 +3714,7 @@ function Library.CreateWindow(opts)
     cancelBtn.BackgroundColor3 = Color3.fromRGB(40, 42, 50)
     cancelBtn.BackgroundTransparency = 0.2
     cancelBtn.BorderSizePixel = 0
+    cancelBtn.Text = ""
     cancelBtn.AutoButtonColor = false
     cancelBtn.ZIndex = ZBASE + 55
     local canCorner = Instance.new("UICorner", cancelBtn)
@@ -3887,6 +3940,7 @@ function Library.CreateWindow(opts)
     end)
 
     local revealed = false
+    noteTree(gui)
     local function revealMain()
         if revealed then return end
         revealed = true
