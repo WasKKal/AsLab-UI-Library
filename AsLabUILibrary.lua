@@ -6,6 +6,9 @@ local TextService = game:GetService("TextService")
 local Library = {}
 Library.__index = Library
 
+-- 前置声明：这些函数在下方定义，但更早的 makeDropdown 等会引用它们
+local fadeGroup, setGroupTransparency, tweenGroup, showColorPanel
+
 local SCALE = 0.85
 local function s(n) return n * SCALE end
 
@@ -104,6 +107,74 @@ local NOTIFY_TIME = 3
 local CONFLICT_COLOR = Color3.fromRGB(255, 120, 60)
 local KEY_PLACEHOLDER = "···"
 local KEY_LISTENING = "Tap A Key"
+
+-- ===== 国际化（i18n）=====
+-- 语言列表：设置页语言下拉仅包含这两项。值即显示文本。
+AvailableLanguages = { "English", "中文" }
+Library.AvailableLanguages = AvailableLanguages
+
+-- 内置英文 -> 中文 的默认翻译表（仅库内置 UI 文本）。
+-- 用户输入的标题/文本若需翻译，通过 CreateWindow 的 Translations 参数注入。
+local DEFAULT_CN = {
+    ["Settings"] = "设置",
+    ["Window Size"] = "窗口大小",
+    ["Language"] = "语言",
+    ["Apply"] = "应用",
+    ["Board-Key"] = "快捷键",
+    ["AddShortcut"] = "添加快捷键",
+    ["Add"] = "添加",
+    ["Create"] = "创建",
+    ["Delete"] = "删除",
+    ["Setting"] = "设置",
+    ["Run"] = "运行",
+    ["OFF"] = "关",
+    ["ON"] = "开",
+    ["Confirm"] = "确认",
+    ["Cancel"] = "取消",
+    ["Yes"] = "是",
+    ["No"] = "否",
+    ["Close"] = "关闭",
+    ["Minimize"] = "最小化",
+    ["Are you sure you want to close?"] = "确定要关闭窗口吗？",
+    ["Tap A Key"] = "请按一个键",
+    ["Conflict with"] = "冲突于",
+}
+
+local function translateKey(win, key)
+    key = tostring(key or "")
+    if key == "" then return key end
+    local lang = (win and win._language) or "English"
+    if lang == "English" then return key end
+    local custom = win and win._translations and win._translations[lang] and win._translations[lang][key]
+    if custom ~= nil then return custom end
+    return DEFAULT_CN[key] or key
+end
+
+-- 注册一个静态文本的翻译入口：初次赋值并登记到 win._i18n，语言切换时统一刷新。
+local function i18nText(win, obj, key)
+    if not (win and obj) then
+        if obj then obj.Text = tostring(key or "") end
+        return
+    end
+    win._i18n = win._i18n or {}
+    obj.Text = translateKey(win, key)
+    table.insert(win._i18n, { obj = obj, key = key })
+end
+
+-- 注册一个动态刷新函数：语言切换时重新执行（用于会变/拼装的文本）。
+local function i18nDynamic(win, fn)
+    if not (win and fn) then return end
+    win._i18nDynamic = win._i18nDynamic or {}
+    table.insert(win._i18nDynamic, fn)
+end
+
+local function applyLang(win)
+    if not win then return end
+    for _, e in ipairs(win._i18n or {}) do
+        if e.obj and e.obj.Parent then e.obj.Text = translateKey(win, e.key) end
+    end
+    for _, fn in ipairs(win._i18nDynamic or {}) do pcall(fn) end
+end
 
 local function httpGet(url)
     local ok, res = pcall(function()
@@ -540,6 +611,7 @@ local function makeDropdown(parent, opts)
         tx.ZIndex = z + 12
         tx:SetAttribute("_skipFade", true)
         ob.MouseButton1Click:Connect(function()
+            if txt == selected then return end
             selected = txt
             capLabel.Text = txt
             refreshHighlights()
@@ -551,12 +623,21 @@ local function makeDropdown(parent, opts)
     end
 
     refreshHighlights = function()
+        -- 已选中的选项不出现在菜单内：隐藏该行并紧凑重排，菜单高度随可见项收缩
+        local vis = 0
         for _, o in ipairs(optionButtons) do
-            local on = (o.name == selected)
-            o.tx.TextColor3 = on and Color3.fromRGB(226, 234, 250) or Color3.fromRGB(230, 230, 235)
-            o.btn.BackgroundColor3 = on and Color3.fromRGB(62, 76, 112) or Color3.fromRGB(24, 24, 30)
-            o.btn.BackgroundTransparency = on and 0 or 1
+            local isSel = (o.name == selected)
+            o.btn.Visible = not isSel
+            o.tx.Visible = not isSel
+            o.tx.TextColor3 = Color3.fromRGB(230, 230, 235)
+            o.btn.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+            o.btn.BackgroundTransparency = 1
+            if not isSel then
+                o.btn.Position = UDim2.fromOffset(s(4), s(4) + vis * optH)
+                vis = vis + 1
+            end
         end
+        menu.Size = UDim2.fromOffset(capW, math.max(1, vis) * optH + s(8))
     end
 
     local function hitTest(o, px, py)
@@ -597,8 +678,11 @@ local function makeDropdown(parent, opts)
         obj.Value = selected
         refreshHighlights()
         if obj._configValue then obj._configCurrent = selected; syncConfigValue(obj) end
+        if cb then pcall(cb, selected) end
     end
     function obj:Get() return selected end
+    -- 允许通过 SetValue 更改下拉内容
+    obj.SetValue = obj.Set
     obj._closeMenu = closeMenu
     refreshHighlights()
     return obj
@@ -633,10 +717,10 @@ local function makeRow(parent, index, title)
     label.BackgroundTransparency = 1
     label.Active = false
     label:SetAttribute("_skipFade", true)
-    return row
+    return row, label
 end
 
-local fadeGroup, slotY, createShortcut, destroyShortcut, startListen
+local slotY, createShortcut, destroyShortcut, startListen
 local buildDetail, addDetailRow, openDetail, closeDetail
 
 local function updateCanvas(win)
@@ -673,7 +757,7 @@ end
 
 local groupState = setmetatable({}, { __mode = "k" })
 
-local function setGroupTransparency(container, t)
+setGroupTransparency = function(container, t, force)
     if not (container and container.Parent) then return end
     t = math.clamp(t or 0, 0, 1)
     local st = groupState[container]
@@ -695,6 +779,7 @@ local function setGroupTransparency(container, t)
     for _, node in ipairs(nodes) do
         local skip = false
         pcall(function() skip = (node:GetAttribute("_skipFade") == true) end)
+        if force then skip = false end
         if not skip then
             if pcall(function() return node.BackgroundTransparency end) then
                 local cur = node.BackgroundTransparency
@@ -722,6 +807,7 @@ local function setGroupTransparency(container, t)
         for _, ch in ipairs(node:GetChildren()) do
             local chSkip = false
             pcall(function() chSkip = (ch:GetAttribute("_skipFade") == true) end)
+            if force then chSkip = false end
             if ch:IsA("UIStroke") and not chSkip then
                 local b = base[ch]; if not b then b = {}; base[ch] = b end
                 local cur = ch.Transparency
@@ -733,7 +819,7 @@ local function setGroupTransparency(container, t)
     st.gt = t
 end
 
-local function tweenGroup(container, target, ti, onDone)
+tweenGroup = function(container, target, ti, onDone, force)
     if not (container and container.Parent) then return end
     local st = groupState[container]
     if not st then st = { gt = 0, base = {} }; groupState[container] = st end
@@ -751,7 +837,7 @@ local function tweenGroup(container, target, ti, onDone)
     ti = ti or TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     local tw = TweenService:Create(proxy, ti, { Value = target })
     local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
-        setGroupTransparency(container, proxy.Value)
+        setGroupTransparency(container, proxy.Value, force)
     end)
     st.tween = tw
     st.conn = conn
@@ -760,7 +846,7 @@ local function tweenGroup(container, target, ti, onDone)
         if conn then conn:Disconnect() end
         st.conn = nil
         st.tween = nil
-        setGroupTransparency(container, target)
+        setGroupTransparency(container, target, force)
         if onDone then pcall(onDone) end
     end)
     tw:Play()
@@ -779,7 +865,7 @@ fadeGroup = function(group, target, onDone)
 end
 
 -- 统一的「颜色面板」显隐：进入淡出/淡入动画，避免直接 Visible 硬切
-local function showColorPanel(p, show)
+showColorPanel = function(p, show)
     if not (p and p.Parent) then return end
     if show then
         p.Visible = true
@@ -896,7 +982,7 @@ local function refreshConflicts(win)
         for _, c in ipairs(t._controls or {}) do
             local kb = c._keybind
             local state = c._keyLabel and c._keyLabel.Text or ""
-            if kb ~= nil and state ~= KEY_PLACEHOLDER and state ~= KEY_LISTENING then
+            if kb ~= nil and state ~= KEY_PLACEHOLDER and state ~= translateKey(win, KEY_LISTENING) and state ~= KEY_LISTENING then
                 local key = tostring(kb)
                 groups[key] = groups[key] or {}
                 table.insert(groups[key], c)
@@ -914,7 +1000,7 @@ local function refreshConflicts(win)
                     end
                 end
                 if #names > 0 then
-                    cl.Text = "Conflict with " .. table.concat(names, ", ", 1, math.min(#names, 2))
+                    cl.Text = translateKey(win, "Conflict with") .. " " .. table.concat(names, ", ", 1, math.min(#names, 2))
                 else
                     cl.Text = ""
                 end
@@ -1119,7 +1205,7 @@ startListen = function(win, ctrl, label)
         old.ctrl._keybind = nil
     end
     ctrl._keybind = nil
-    label.Text = KEY_LISTENING
+    label.Text = translateKey(win, KEY_LISTENING)
     win._listening = { ctrl = ctrl, label = label }
     refreshConflicts(win)
 end
@@ -1141,12 +1227,17 @@ buildDetail = function(win, ctrl)
     title.Name = "DetailTitle"
     title.Size = UDim2.new(1, -s(40), 0, s(24))
     title.Position = UDim2.new(0, 0, 0, 0)
-    title.Text = tostring(ctrl._opts.Title or "") .. " - Setting"
     title.Font = Style.Font
     title.TextSize = s(15)
     title.TextColor3 = Style.Text
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.BackgroundTransparency = 1
+    -- 详情标题动态翻译："<控件标题> - 设置"
+    local function refreshDetailTitle()
+        title.Text = translateKey(win, ctrl._opts.Title or "") .. " - " .. translateKey(win, "Setting")
+    end
+    i18nDynamic(win, refreshDetailTitle)
+    refreshDetailTitle()
 
     local back = Instance.new("TextButton", layer)
     back.Name = "Back"
@@ -1163,13 +1254,15 @@ buildDetail = function(win, ctrl)
     applyIcon(backIcon, "arrow-left")
     back.MouseButton1Click:Connect(function() closeDetail(win) end)
 
-    local krow = makeRow(layer, 0, "Board-Key")
+    local krow, klabel2 = makeRow(layer, 0, "Board-Key")
+    i18nText(win, klabel2, "Board-Key")
     local _, klabel, khit, kconflict = makeBox(krow, s(110), KEY_PLACEHOLDER)
     ctrl._keyLabel = klabel
     ctrl._conflictLabel = kconflict
     khit.MouseButton1Click:Connect(function() startListen(win, ctrl, klabel) end)
 
-    local arow = makeRow(layer, 1, "AddShortcut")
+    local arow, alabel2 = makeRow(layer, 1, "AddShortcut")
+    i18nText(win, alabel2, "AddShortcut")
     local abox, alabel, ahit = makeBox(arow, s(110), "Create")
     abox.BackgroundTransparency = 0.3
     local aicon = Instance.new("ImageLabel", abox)
@@ -1186,7 +1279,7 @@ buildDetail = function(win, ctrl)
     local aStroke = abox:FindFirstChildOfClass("UIStroke")
     local function refreshAddState()
         local exists = ctrl._shortcut ~= nil
-        alabel.Text = exists and "Delete" or "Create"
+        alabel.Text = translateKey(win, exists and "Delete" or "Create")
         local fg, bg, sc
         if exists then
             fg = Color3.fromRGB(255, 156, 156)
@@ -1203,6 +1296,7 @@ buildDetail = function(win, ctrl)
         alabel.TextColor3 = fg
         if aStroke then aStroke.Color = sc end
     end
+    i18nDynamic(win, refreshAddState)
     ahit.MouseButton1Click:Connect(function()
         if ctrl._shortcut then destroyShortcut(win, ctrl) else createShortcut(win, ctrl) end
         refreshAddState()
@@ -1218,7 +1312,8 @@ addDetailRow = function(win, ctrl, kind, opts)
     local index = ctrl._detailCount
     ctrl._detailCount = index + 1
     updateCanvas(win)
-    local row = makeRow(layer, index, opts.Title or kind)
+    local row, rowLabel = makeRow(layer, index, opts.Title or kind)
+    i18nText(win, rowLabel, opts.Title or kind)
 
     if kind == "Slider" then
         local minV = opts.Min or 0
@@ -1321,7 +1416,10 @@ addDetailRow = function(win, ctrl, kind, opts)
             value = snapVal(minV + f * getRange())
             refresh(animate)
             if opts.Callback then pcall(opts.Callback, value) end
-            if obj and obj._configValue then obj._configCurrent = value; syncConfigValue(obj) end
+            if obj then
+                obj.Value = value
+                if obj._configValue then obj._configCurrent = value; syncConfigValue(obj) end
+            end
         end
         local function pointFrac(input)
             local aw = track.AbsoluteSize.X
@@ -1345,10 +1443,13 @@ addDetailRow = function(win, ctrl, kind, opts)
         local obj = { Value = def }
         function obj:Set(v)
             value = snapVal(v)
+            obj.Value = value
             refresh(false)
             if opts.Callback then pcall(opts.Callback, value) end
             if obj._configValue then obj._configCurrent = value; syncConfigValue(obj) end
         end
+        -- 允许通过 SetValue 更改滑块内容
+        obj.SetValue = obj.Set
         if opts.ConfigKey and opts.ConfigKey ~= "" then
             obj._configKey = opts.ConfigKey
             obj._configKind = "Slider"
@@ -1380,8 +1481,9 @@ addDetailRow = function(win, ctrl, kind, opts)
         local function refresh()
             silver.BackgroundTransparency = st and Style.SilverTransparency or 1
             label.TextColor3 = st and Style.ActiveText or Style.Text
-            label.Text = st and "ON" or "OFF"
+            label.Text = translateKey(win, st and "ON" or "OFF")
         end
+        i18nDynamic(win, refresh)
         hit.MouseButton1Click:Connect(function()
             st = not st
             refresh()
@@ -1390,7 +1492,15 @@ addDetailRow = function(win, ctrl, kind, opts)
         end)
         refresh()
         local obj = { Value = st }
-        function obj:Set(v) st = v; refresh(); if obj._configValue then obj._configCurrent = st; syncConfigValue(obj) end end
+        function obj:Set(v)
+            st = not not v
+            obj.Value = st
+            refresh()
+            if opts.Callback then pcall(opts.Callback, st) end
+            if obj._configValue then obj._configCurrent = st; syncConfigValue(obj) end
+        end
+        -- 允许通过 SetValue 更改子开关
+        obj.SetValue = obj.Set
         if opts.ConfigKey and opts.ConfigKey ~= "" then
             obj._configKey = opts.ConfigKey
             obj._configKind = "Toggle"
@@ -1402,7 +1512,8 @@ addDetailRow = function(win, ctrl, kind, opts)
         end
         return obj
     elseif kind == "Button" then
-        local box, _, hit = makeBox(row, s(90), opts.Text or "Run")
+        local box, blabel, hit = makeBox(row, s(90), opts.Text or "Run")
+        i18nText(win, blabel, opts.Text or "Run")
         local press = Instance.new("Frame", box)
         press.Size = UDim2.fromScale(1, 1)
         press.BackgroundColor3 = Color3.new(0, 0, 0)
@@ -1585,7 +1696,10 @@ addDetailRow = function(win, ctrl, kind, opts)
             cursor.Position = UDim2.new(sat, -s(5), 1 - val, -s(5))
             hcur.Position = UDim2.new(h, -s(2), 0.5, -s(8))
             if fire and opts.Callback then pcall(opts.Callback, c) end
-            if obj and obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
+            if obj then
+                obj.Value = c
+                if obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
+            end
         end
         local function grab(apply, initial)
             local px, py = inputPoint(initial)
@@ -1657,10 +1771,13 @@ addDetailRow = function(win, ctrl, kind, opts)
         function obj:Set(c)
             if typeof(c) == "Color3" then
                 h, sat, val = c:ToHSV()
+                obj.Value = c
                 refresh(false)
                 if obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
             end
         end
+        -- 允许通过 SetValue 更改取色器内容
+        obj.SetValue = obj.Set
         function obj:Get() return Color3.fromHSV(h, sat, val) end
         if opts.ConfigKey and opts.ConfigKey ~= "" then
             obj._configKey = opts.ConfigKey
@@ -1835,6 +1952,8 @@ local function addControl(tab, kind, opts)
         end
         syncShortcut(ctrl)
     end
+    -- 允许通过 SetValue 更改主控件状态
+    ctrl.SetValue = ctrl.Set
 
     if opts.ConfigKey and opts.ConfigKey ~= "" then
         ctrl._configKey = opts.ConfigKey
@@ -1891,7 +2010,7 @@ local function addControl(tab, kind, opts)
         tx.Name = "Title"
         tx.Size = UDim2.new(1, -8, 0, s(20))
         tx.Position = UDim2.new(0, 4, 0.72, 0)
-        tx.Text = opts.Title or ""
+        i18nText(cwin, tx, opts.Title or "")
         tx.Font = Style.Font
         tx.TextSize = s(12)
         tx.TextColor3 = Style.Text
@@ -1904,7 +2023,7 @@ local function addControl(tab, kind, opts)
         tx.Name = "Title"
         tx.Size = UDim2.new(1, -8, 1, -8)
         tx.Position = UDim2.new(0, 4, 0, 4)
-        tx.Text = opts.Title or ""
+        i18nText(cwin, tx, opts.Title or "")
         tx.Font = Style.Font
         tx.TextSize = s(13)
         tx.TextColor3 = Style.Text
@@ -2528,14 +2647,17 @@ local function expand(win)
     end)
 end
 
+-- 语言变更监听：支持多个监听器（库内部的 applyLang 与外部回调互不覆盖）
 function Library:OnLanguageChanged(fn)
-    self._languageChanged = fn
+    if type(fn) ~= "function" then return self end
+    self._languageListeners = self._languageListeners or {}
+    table.insert(self._languageListeners, fn)
     return self
 end
 
 function Library:SetLanguage(v)
     self._language = tostring(v or "English")
-    if self._languageChanged then pcall(self._languageChanged, self._language) end
+    for _, fn in ipairs(self._languageListeners or {}) do pcall(fn, self._language) end
     return self
 end
 
@@ -2668,7 +2790,7 @@ function Library.CreateWindow(opts)
     infoLabel.Name = "InfoLabel"
     infoLabel.Size = UDim2.new(1, -textLeft - s(24), 0, s(18))
     infoLabel.Position = UDim2.new(0, textLeft, 0, s(27))
-    infoLabel.Text = InfoText
+    infoLabel.Text = tostring(InfoText or "")
     infoLabel.Font = Style.Font
     infoLabel.TextSize = s(12)
     infoLabel.TextColor3 = Style.SubText
@@ -2902,6 +3024,19 @@ function Library.CreateWindow(opts)
     }
     setmetatable(win, Library)
     Library._activeWindow = win
+
+    -- ===== i18n 初始化 =====
+    -- 默认语言由 CreateWindow 的 Language 选项控制，未提供时默认 English。
+    win._language = opts.Language or "English"
+    win._translations = opts.Translations or {}
+    win._i18n = {}
+    win._i18nDynamic = {}
+    win:OnLanguageChanged(function() applyLang(win) end)
+    -- 注册窗口头部信息文本（此时 win 已可引用）
+    if infoLabel then i18nText(win, infoLabel, InfoText) end
+    -- 初次应用（English 下为 no-op；若默认即为中文则立即翻译已注册的文本）
+    applyLang(win)
+
     orbExt.Changed:Connect(function() applyOrbLayout(win) end)
     orbBlend.Changed:Connect(function() applyOrbLayout(win) end)
 
@@ -2979,7 +3114,7 @@ function Library.CreateWindow(opts)
     titleLbl.TextColor3 = Style.Text
     titleLbl.TextXAlignment = Enum.TextXAlignment.Left
     titleLbl.TextYAlignment = Enum.TextYAlignment.Center
-    titleLbl.Text = "Settings"
+    i18nText(win, titleLbl, "Settings")
     titleLbl.ZIndex = SET_Z + 2
 
     local xBtn = Instance.new("TextButton", panel)
@@ -3012,7 +3147,7 @@ function Library.CreateWindow(opts)
     sizeLbl.TextSize = s(12)
     sizeLbl.TextColor3 = Style.SubText
     sizeLbl.TextXAlignment = Enum.TextXAlignment.Left
-    sizeLbl.Text = "Window Size"
+    i18nText(win, sizeLbl, "Window Size")
     sizeLbl.ZIndex = SET_Z + 2
 
     local sVal = Instance.new("TextLabel", panel)
@@ -3058,7 +3193,7 @@ function Library.CreateWindow(opts)
     langLbl.TextSize = s(12)
     langLbl.TextColor3 = Style.SubText
     langLbl.TextXAlignment = Enum.TextXAlignment.Left
-    langLbl.Text = "Language"
+    i18nText(win, langLbl, "Language")
     langLbl.ZIndex = SET_Z + 2
 
     local applyBtn = Instance.new("TextButton", panel)
@@ -3068,7 +3203,7 @@ function Library.CreateWindow(opts)
     applyBtn.BackgroundColor3 = Color3.new(1, 1, 1)
     applyBtn.BackgroundTransparency = Style.SilverTransparency
     applyBtn.BorderSizePixel = 0
-    applyBtn.Text = "Apply"
+    i18nText(win, applyBtn, "Apply")
     applyBtn.Font = Style.Font
     applyBtn.TextSize = s(14)
     applyBtn.TextColor3 = Style.ActiveText
@@ -3081,7 +3216,7 @@ function Library.CreateWindow(opts)
     local SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.75, 1.35, 0.05
     local previewScale = win._uiScale or 1
     local settingsLanguage = win._language or "English"
-    local langOptions = { "English", "简体中文", "日本語", "Español" }
+    local langOptions = { "English", "中文" }
 
     local langDropdown = makeDropdown(panel, {
         Width = pW - s(48),
@@ -3214,7 +3349,110 @@ function Library.CreateWindow(opts)
         markSkip(preview)
     end
 
-    closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+    -- ===== 关闭二次确认对话框 =====
+    -- 点击关闭按钮后不直接销毁，而是弹出一个黑色（带圆角）蒙版 + 与 Settings 一致的面板，
+    -- 中心显示确认文字（含中文版本），由「确认 / 取消」两个按钮决定结果。
+    local confirmOverlay = Instance.new("Frame", gui)
+    confirmOverlay.Name = "CloseConfirmOverlay"
+    confirmOverlay.Size = UDim2.fromScale(1, 1)
+    confirmOverlay.Position = UDim2.fromOffset(0, 0)
+    confirmOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
+    confirmOverlay.BackgroundTransparency = 0.55
+    confirmOverlay.BorderSizePixel = 0
+    confirmOverlay.ZIndex = ZBASE + 51
+    confirmOverlay.Visible = false
+    confirmOverlay.ClipsDescendants = false
+    -- 阻止触摸穿透：蒙版覆盖区下方的窗口控件无法接收点击/拖动
+    confirmOverlay.Active = true
+    local cOvCorner = Instance.new("UICorner", confirmOverlay)
+    cOvCorner.CornerRadius = UDim.new(0, s(24))
+
+    local cpW, cpH = s(320), s(150)
+    local confirmPanel = makeGlass(gui, {
+        Name = "CloseConfirmPanel",
+        Size = UDim2.fromOffset(cpW, cpH),
+        Position = UDim2.new(0.5, -cpW / 2, 0.5, -cpH / 2),
+        Transparency = 0.06,
+        Radius = UDim.new(0, s(16)),
+        Color = Color3.fromRGB(22, 23, 29),
+        Plain = true,
+    })
+    confirmPanel.ZIndex = ZBASE + 53
+    confirmPanel.ClipsDescendants = false
+    confirmPanel.Visible = false
+
+    local confirmText = Instance.new("TextLabel", confirmPanel)
+    confirmText.Name = "CloseConfirmText"
+    confirmText.Size = UDim2.new(1, -s(32), 0, s(48))
+    confirmText.Position = UDim2.new(0, s(16), 0, s(18))
+    confirmText.BackgroundTransparency = 1
+    confirmText.Font = Style.Font
+    confirmText.TextSize = s(15)
+    confirmText.TextColor3 = Style.Text
+    confirmText.TextWrapped = true
+    confirmText.TextXAlignment = Enum.TextXAlignment.Center
+    confirmText.TextYAlignment = Enum.TextYAlignment.Center
+    confirmText.ZIndex = ZBASE + 54
+    i18nText(win, confirmText, "Are you sure you want to close?")
+
+    local cbtnW = (cpW - s(48) - s(12)) / 2
+    local confirmBtn = Instance.new("TextButton", confirmPanel)
+    confirmBtn.Name = "ConfirmClose"
+    confirmBtn.Size = UDim2.fromOffset(cbtnW, s(34))
+    confirmBtn.Position = UDim2.fromOffset(s(24), cpH - s(46))
+    confirmBtn.BackgroundColor3 = Color3.new(1, 1, 1)
+    confirmBtn.BackgroundTransparency = Style.SilverTransparency
+    confirmBtn.BorderSizePixel = 0
+    confirmBtn.AutoButtonColor = false
+    confirmBtn.ZIndex = ZBASE + 55
+    silverGradient(confirmBtn)
+    local cbCorner = Instance.new("UICorner", confirmBtn)
+    cbCorner.CornerRadius = UDim.new(0, s(9))
+    local confirmBtnLbl = Instance.new("TextLabel", confirmBtn)
+    confirmBtnLbl.Size = UDim2.fromScale(1, 1)
+    confirmBtnLbl.BackgroundTransparency = 1
+    confirmBtnLbl.Font = Style.Font
+    confirmBtnLbl.TextSize = s(14)
+    confirmBtnLbl.TextColor3 = Style.ActiveText
+    confirmBtnLbl.TextXAlignment = Enum.TextXAlignment.Center
+    confirmBtnLbl.TextYAlignment = Enum.TextYAlignment.Center
+    confirmBtnLbl.ZIndex = ZBASE + 56
+    i18nText(win, confirmBtnLbl, "Confirm")
+
+    local cancelBtn = Instance.new("TextButton", confirmPanel)
+    cancelBtn.Name = "CancelClose"
+    cancelBtn.Size = UDim2.fromOffset(cbtnW, s(34))
+    cancelBtn.Position = UDim2.fromOffset(s(24) + cbtnW + s(12), cpH - s(46))
+    cancelBtn.BackgroundColor3 = Color3.fromRGB(40, 42, 50)
+    cancelBtn.BackgroundTransparency = 0.2
+    cancelBtn.BorderSizePixel = 0
+    cancelBtn.AutoButtonColor = false
+    cancelBtn.ZIndex = ZBASE + 55
+    local canCorner = Instance.new("UICorner", cancelBtn)
+    canCorner.CornerRadius = UDim.new(0, s(9))
+    local cancelBtnLbl = Instance.new("TextLabel", cancelBtn)
+    cancelBtnLbl.Size = UDim2.fromScale(1, 1)
+    cancelBtnLbl.BackgroundTransparency = 1
+    cancelBtnLbl.Font = Style.Font
+    cancelBtnLbl.TextSize = s(14)
+    cancelBtnLbl.TextColor3 = Style.Text
+    cancelBtnLbl.TextXAlignment = Enum.TextXAlignment.Center
+    cancelBtnLbl.TextYAlignment = Enum.TextYAlignment.Center
+    cancelBtnLbl.ZIndex = ZBASE + 56
+    i18nText(win, cancelBtnLbl, "Cancel")
+
+    local function closeConfirm()
+        confirmOverlay.Visible = false
+        confirmPanel.Visible = false
+    end
+    local function openConfirm()
+        confirmOverlay.Visible = true
+        confirmPanel.Visible = true
+    end
+    confirmBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+    cancelBtn.MouseButton1Click:Connect(closeConfirm)
+
+    closeBtn.MouseButton1Click:Connect(openConfirm)
     minBtn.MouseButton1Click:Connect(function() collapse(win) end)
     settingsBtn.MouseButton1Click:Connect(function() openSettings() end)
 
@@ -3398,22 +3636,62 @@ function Library.CreateWindow(opts)
     end
 
     if background and background:IsA("ImageLabel") and type(bgUrl) == "string" and bgUrl ~= "" then
-        win._main.Visible = false
-        task.spawn(function()
-            local ok, data = pcall(function() return game:HttpGet(bgUrl) end)
-            if ok and type(data) == "string" and #data > 0 then
-                pcall(function()
-                    makefolder(RootFolder)
-                    makefolder(AssetDir)
-                    writefile(AssetDir .. "/background.png", data)
-                end)
-                local asset
-                pcall(function() asset = getcustomasset(AssetDir .. "/background.png") end)
-                if asset then background.Image = asset end
+        -- ===== 背景图本地缓存 =====
+        -- 缓存文件：AsLab/<Folder>/background.png
+        -- 缓存标记：AsLab/<Folder>/background.url（记录下载时的链接）
+        -- 规则：本地已有缓存且链接未变 -> 直接使用本地资源，不重复下载；
+        --       链接更换或本地无缓存 -> 才发起网络请求并覆盖缓存。
+        local bgPath = AssetDir .. "/background.png"
+        local bgUrlPath = AssetDir .. "/background.url"
+
+        local function readText(path)
+            local ok, txt = pcall(function()
+                if type(isfile) == "function" and isfile(path) and type(readfile) == "function" then
+                    return readfile(path)
+                end
+                return nil
+            end)
+            return ok and txt or nil
+        end
+
+        local cachedUrl = readText(bgUrlPath)
+        local hasCache = (type(isfile) == "function") and (function()
+            local ok, r = pcall(function() return isfile(bgPath) end)
+            return ok and r
+        end)() or false
+
+        if hasCache and cachedUrl == bgUrl then
+            -- 缓存命中：优先使用本地资源，直接显示（无网络下载）
+            local asset
+            pcall(function() asset = getcustomasset(bgPath) end)
+            if asset then
+                background.Image = asset
+                revealMain()
+            else
+                hasCache = false -- 资源读取失败则回退到下载流程
             end
-            revealMain()
-        end)
-        task.delay(12, revealMain)
+        end
+
+        if not (hasCache and cachedUrl == bgUrl) then
+            win._main.Visible = false
+            task.spawn(function()
+                local ok, data = pcall(function() return game:HttpGet(bgUrl) end)
+                if ok and type(data) == "string" and #data > 0 then
+                    pcall(function()
+                        makefolder(RootFolder)
+                        makefolder(AssetDir)
+                        writefile(bgPath, data)
+                        -- 写入链接标记，供下次启动判断是否需要重新下载
+                        writefile(bgUrlPath, bgUrl)
+                    end)
+                    local asset
+                    pcall(function() asset = getcustomasset(bgPath) end)
+                    if asset then background.Image = asset end
+                end
+                revealMain()
+            end)
+            task.delay(12, revealMain)
+        end
     else
         revealMain()
     end
@@ -3426,33 +3704,88 @@ function Library:_fadeIn()
         pcall(function() self._fadeTween:Cancel() end)
         self._fadeTween = nil
     end
+    if self._fadeGroupTween then
+        pcall(function() self._fadeGroupTween:Cancel() end)
+        self._fadeGroupTween = nil
+    end
+    if self._fadePosTween then
+        pcall(function() self._fadePosTween:Cancel() end)
+        self._fadePosTween = nil
+    end
     self._fadeGen = (self._fadeGen or 0) + 1
     local gen = self._fadeGen
-    if self._main and self._main.Parent then
-    end
+
+    local main = self._main
     local scale = self._mainScale
-    if not (scale and scale.Parent) then return end
+    if not (main and main.Parent and scale and scale.Parent) then return end
     local targetScale = self._uiScale or 1
-    scale.Scale = targetScale * 0.96
-    local tw = TweenService:Create(scale,
-        TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+
+    -- ===== 入场动画（重做）=====
+    -- 1) 整体由 0.88 缩放弹起（Back 轻微过冲，落点回正）；
+    -- 2) 窗口整体透明淡入（强制包含 _skipFade 节点，保证整窗一致）；
+    -- 3) 同时从下方 s(14) 的位移上滑归位，形成「上浮 + 展开 + 淡入」的合成入场。
+    local basePos = main.Position
+    local baseY = basePos.Y.Offset
+    self._entranceActive = true
+    scale.Scale = targetScale * 0.88
+    main.Position = UDim2.new(basePos.X.Scale, basePos.X.Offset, basePos.Y.Scale, baseY + s(14))
+    setGroupTransparency(main, 1, true)
+
+    local twScale = TweenService:Create(scale,
+        TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
         { Scale = targetScale })
-    self._fadeTween = tw
-    tw:Play()
-    task.delay(0.55, function()
+    self._fadeTween = twScale
+    twScale:Play()
+
+    local twPos = TweenService:Create(main,
+        TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        { Position = UDim2.new(basePos.X.Scale, basePos.X.Offset, basePos.Y.Scale, baseY) })
+    self._fadePosTween = twPos
+    twPos:Play()
+
+    -- 透明度：从全隐到全显（0.42s，Quint Out），与缩放在前段同步、后段先落定
+    self._fadeGroupTween = tweenGroup(main, 0,
+        TweenInfo.new(0.42, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), nil, true)
+
+    task.delay(0.62, function()
         if self._fadeGen ~= gen then return end
+        self._entranceActive = false
         if scale and scale.Parent then scale.Scale = self._uiScale or 1 end
-        if self._main and self._main.Parent then end
+        if main and main.Parent then
+            main.Position = UDim2.new(basePos.X.Scale, basePos.X.Offset, basePos.Y.Scale, baseY)
+            setGroupTransparency(main, 0, true)
+        end
+        -- 入场强制淡入会临时改写 _skipFade 节点的透明度（如 TabSel 选中底），
+        -- 结束时重新刷新当前选中页的选中态，避免高亮残留半透明。
+        if self._activeTab and self._activeTab > 0 and type(selectTab) == "function" then
+            pcall(selectTab, self, self._activeTab)
+        end
     end)
 end
 
 function Library:_finishFadeIn()
     self._fadeGen = (self._fadeGen or 0) + 1
+    local wasEntrance = self._entranceActive
+    self._entranceActive = false
     if self._fadeTween then
         pcall(function() self._fadeTween:Cancel() end)
         self._fadeTween = nil
     end
-    if self._main and self._main.Parent then
+    if self._fadeGroupTween then
+        pcall(function() self._fadeGroupTween:Cancel() end)
+        self._fadeGroupTween = nil
+    end
+    if self._fadePosTween then
+        pcall(function() self._fadePosTween:Cancel() end)
+        self._fadePosTween = nil
+    end
+    if self._main and self._main.Parent and self._mainScale then
+        self._mainScale.Scale = self._uiScale or 1
+        -- 只在本窗「入场动画进行中」才需要强制还原透明度；
+        -- 否则会把 _skipFade 节点（如 TabSel）被 tween 控制的透明度覆盖回旧值。
+        if wasEntrance then
+            setGroupTransparency(self._main, 0, true)
+        end
     end
 end
 
@@ -3510,7 +3843,7 @@ function Library:AddTab(name, icon)
     local tname = Instance.new("TextLabel", row)
     tname.Name = "TabName"
     tname.BackgroundTransparency = 1
-    tname.Text = name
+    i18nText(self, tname, name)
     tname.TextColor3 = Cfg.TabInactiveColor
     tname.TextSize = s(Cfg.TabTextSize)
     tname.Font = Style.Font
