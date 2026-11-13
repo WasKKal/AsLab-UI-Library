@@ -8,6 +8,7 @@
               SetConfig / RenameConfig / DeleteConfig / ConfigExists
       Tab:AddToggle / AddButton
       Ctrl:AddSlider / AddToggle / AddButton / AddColorPicker / AddDropdown / AddParagraph
+      Ctrl:SetTitle / GetTitle（主控件与子选项均支持，运行时改标题）
       Ctrl:Set / SetValue，Dropdown:Get / GetOptions / SetOptions / AddOption / RemoveOption
       Slider 值可动态改变：子滑块对象 .Set / .SetValue
       Paragraph:SetTitle / SetInfo / SetIcon / SetIconColor / SetBackColor / GetTitle / GetInfo
@@ -23,9 +24,9 @@ Library.PreloadLucide()
 -- 1. 创建窗口（演示 CreateWindow 的全部参数）
 -- ============================================================
 local Win = Library.CreateWindow({
-    Title = "AsLab Full API",
+    Title = "TitleBar",
     TitleIcon = "layout-grid",
-    Info = "Every API in one place",
+    Info = "ImInfoBar",
     Size = UDim2.fromOffset(560, 420),
     -- 背景图留空时使用库内置渐变；填写 URL 会下载到 AsLab/<Folder>/background.png
     Background = "https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/assets/aslab_wallpaper.png",
@@ -185,7 +186,7 @@ Boost:AddButton({
     end,
 })
 
--- 段落控件（照抄 DynamicCow 的 SubParagraph）：Title + Info + 可选 Icon，高度随文字自动变化。
+-- 段落控件：Title + Info + 可选 Icon，高度随文字自动变化。
 -- AddParagraph 返回对象支持：SetTitle / SetInfo / SetIcon / SetIconColor / SetBackColor / GetTitle / GetInfo
 local Notes = TabGeneral:AddToggle({ Title = "Notes", Icon = "info", Default = false })
 local NotePara
@@ -507,13 +508,21 @@ TabNotify:AddToggle({ Title = "Auto Notify (1s)", Icon = "bell", Default = false
     end)
 end })
 
+-- 语言切换：子下拉改为子 Button；点击时用新增的 SetTitle 方法同时改主控件 / 子控件标题。
 local LangToggle = TabNotify:AddToggle({ Title = "Language", Icon = "globe", Default = false })
-LangToggle:AddDropdown({
-    Title = "Language",
-    Options = { "English", "中文" },
-    Default = "English",
-    ConfigKey = "language",
-    Callback = function(v) Win:SetLanguage(v) end,   -- 立即切换整套 UI 文案
+local LangButton   -- 前向声明：Callback 内需引用自身
+local function refreshLangTitles()
+    local cur = Win:GetLanguage()
+    LangToggle:SetTitle("Language [" .. cur .. "]")
+    LangButton:SetTitle("Switch to " .. (cur == "English" and "中文" or "English"))
+end
+LangButton = LangToggle:AddButton({
+    Title = "Switch to 中文",
+    Callback = function()
+        Win:SetLanguage(Win:GetLanguage() == "English" and "中文" or "English")  -- 立即切换整套 UI 文案
+        -- 新方法：Toggle 与 Button（主控件 / 子控件）都能在运行时改 Title
+        refreshLangTitles()
+    end,
 })
 
 -- 语言变化回调（外部同步自己的文案时使用）
@@ -538,9 +547,11 @@ TabCustom:AddNotice({
 })
 
 -- 11.2 下方左右两个区域的 Notice 栏（用自定义面板实现，各占一半宽度）
-local areaW = (Win._controlW or 536)
+-- 用自定义层的真实像素宽度算半栏，避免右栏 / 右侧按钮超出容器被截断
+local areaW = TabCustom.ContainerWidth or TabCustom.Container.Size.X.Offset
+if not areaW or areaW <= 0 then areaW = (Win._controlW or 536) - 24 end
 local uGap = 12
-local halfW = math.max(140, math.floor((areaW - uGap) / 2))
+local halfW = math.max(120, math.floor((areaW - uGap) / 2))
 local barH = 140
 
 -- 复刻库内玻璃观感的面板（库外代码也可自建 UI）
