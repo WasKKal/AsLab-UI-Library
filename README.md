@@ -83,7 +83,7 @@ Vol:SetValue(80)   -- 运行时动态改变滑块值（自动 clamp 到 0~100）
 | `Ctrl:AddToggle(opts)` | 子开关 |
 | `Ctrl:AddButton(opts)` | 子按钮 |
 | `Ctrl:AddColorPicker(opts)` | 取色器 |
-| `Ctrl:AddDropdown(opts)` | 下拉选择（支持 `SetOptions` / `AddOption` / `RemoveOption` 动态增删） |
+| `Ctrl:AddDropdown(opts)` | 下拉选择（`Multi = true` 可多选；支持 `SetOptions` / `AddOption` / `RemoveOption` 动态增删） |
 | `Ctrl:AddParagraph(opts)` | 文本段落（标题 + 说明 + 可选图标，高度随文字自动变化） |
 
 **通用方法（主控件与子选项均支持）**
@@ -92,6 +92,35 @@ Vol:SetValue(80)   -- 运行时动态改变滑块值（自动 clamp 到 0~100）
 | --- | --- |
 | `Ctrl:SetTitle(text)` | 运行时改变标题，返回控件自身，便于链式调用 |
 | `Ctrl:GetTitle()` | 读回当前标题 |
+
+### ✅ 多选下拉 `Multi = true`
+
+```lua
+local targets = host:AddDropdown({
+    Title = "Targets",
+    Multi = true,                          -- 开启多选
+    Options = { "Head", "Torso", "Left Arm", "Right Arm" },
+    Default = { "Head", "Torso" },         -- 数组；写成 "Head,Torso" 也可
+    ConfigKey = "esp_targets",
+    Callback = function(list)              -- 收到数组，顺序与 Options 一致
+        print(table.concat(list, ", "))
+    end,
+})
+
+targets:Get()                -- { "Head", "Torso" }
+targets:Set({ "Left Arm" })  -- 覆盖选中
+targets:Set("Head,Torso")    -- 逗号串同样接受
+targets:Select("Right Arm")  -- 增/删单项（第二参数可显式 true / false）
+targets:IsSelected("Head")   -- true
+targets:ClearSelection()     -- 清空
+```
+
+行为说明：
+
+- **胶囊文案**：≤ 3 项显示 `A, B, C`；超过折叠为 `A, B, C and N more`（中文「等 N 项」）；空选择显示 `None` /「无」。切换语言会自动重算。
+- **菜单**：所有选项常驻显示，选中项为银白底 + 深色文字 + 右侧对勾；**点选不收起菜单**，便于连续勾选，点菜单外部收起。
+- **配置**：`ConfigKey` 以 JSON 数组存入配置文件（`["Head","Torso"]`），`SaveConfig` / `LoadConfig` 往返不丢项。
+- **兼容**：不写 `Multi` 时与旧版行为完全一致（单选，`Get()` 返回字符串）。
 
 ### ✏️ 运行时改标题 `SetTitle` / `GetTitle`
 
