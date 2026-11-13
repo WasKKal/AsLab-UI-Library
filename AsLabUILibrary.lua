@@ -1275,8 +1275,14 @@ setGroupTransparency = function(container, t, force)
         local nb = nominal[node]
         if nb and nb[key] ~= nil then
             b[key] = nb[key]
-        elseif b[key] == nil then
-            b[key] = cur
+        else
+            if b[key] == nil then b[key] = cur end
+            -- 首次淡出时把「正常显示值」固化进标称表：部分容器会先被
+            -- setGroupTransparency(...,1) 整树淡成透明、随后才 noteTree，
+            -- 若不固化，noteNode 会把透明态 1 误记成标称背景透明度，
+            -- 导致之后淡入时黑色背景（Orb / Shortcut 等）永远恢复不回来。
+            if not nb then nb = {}; nominal[node] = nb end
+            nb[key] = b[key]
         end
         return b[key]
     end
@@ -4035,7 +4041,8 @@ function Library.CreateWindow(opts)
     orb.AnchorPoint = Vector2.new(0, 0)
     orb.BackgroundColor3 = Style.Glass
     orb.BackgroundTransparency = Style.GlassTransparency
-    setGroupTransparency(orb, 1)
+    -- 初始仅用 Visible=false 隐藏即可；不要先整树淡成透明，否则随后
+    -- noteTree(gui) 会把透明态误记为标称值，收起窗口淡入时黑底恢复不回来。
     orb.Visible = false
     orb.ZIndex = ZBASE + 50
     orb.ClipsDescendants = true
