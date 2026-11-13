@@ -111,6 +111,38 @@ LangButton = LangToggle:AddButton({
 
 `SetTitle` 会同步更新方块标题、详情页标题、已注册的翻译 key 与快捷图标文字，因此后续 `SetLanguage()` 不会把标题覆盖回旧值。
 
+### 🌐 多语言 `Translations` / `Win:Translate`
+
+库内置中英文案。控件标题、Tab 名、窗口标题与 Info、**通知（`ShowNotify` 的 Title / Info）**、**Shortcut 胶囊文字**都会随 `SetLanguage()` 自动切换。
+
+自定义文案通过 `CreateWindow` 的 `Translations` 登记，键为英文原文：
+
+```lua
+local Win = Library.CreateWindow({
+    Title = "TitleBar", Info = "ImInfoBar",
+    Translations = {
+        ["中文"] = {
+            ["TitleBar"] = "标题栏",
+            ["ImInfoBar"] = "信息栏",
+            ["Hello"] = "你好",
+            ["A short toast."] = "一条简短通知。",
+        },
+    },
+})
+
+Win:SetLanguage("中文")
+Win:ShowNotify({ Title = "Hello", Info = "A short toast." })  -- 显示「你好 / 一条简短通知。」
+```
+
+动态拼接的文案用 `Win:Translate(key)` 处理固定部分；未登记的 key 原样返回，对已翻译文本再次调用是幂等的。自建 UI 可在 `OnLanguageChanged` 里同步：
+
+```lua
+Win:ShowNotify({ Title = "Config", Info = Win:Translate("Loaded") .. " " .. cfgName })
+Win:OnLanguageChanged(function(lang)
+    myCustomLabel.Text = Win:Translate("Server / LocalPlayer")
+end)
+```
+
 ### 📝 段落控件 `Ctrl:AddParagraph`
 
 用于详情页内的静态说明块，签名简洁统一：
