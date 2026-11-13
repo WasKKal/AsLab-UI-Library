@@ -4913,6 +4913,11 @@ function Library.CreateWindow(opts)
         ddScroll.ScrollBarThickness = s(6)
         ddScroll.ZIndex = SET_Z + 21
         ddScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        -- 圆角：ScrollingFrame 自身也要 UICorner + ClipsDescendants。
+        -- 否则它按矩形裁剪子项，会盖住 ddMenu 的圆角，展开后四角呈直角。
+        local ddScrollCorner = Instance.new("UICorner", ddScroll)
+        ddScrollCorner.CornerRadius = UDim.new(0, s(10))
+        ddScroll.ClipsDescendants = true
         local ddScrollLayout = Instance.new("UIListLayout", ddScroll)
         ddScrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
         ddScrollLayout.Padding = UDim.new(0, s(2))
