@@ -1093,6 +1093,34 @@ end
 
 local buildDetail, addDetailRow, openDetail, closeDetail
 
+-- 按可变列/行跨度（_cols/_rows）把 tab 内的控件流水排布；支持 Notice 跨 1~3 格。
+-- 返回网格内容底边像素高度，并把每个控件的像素矩形写回 ctrl._x/_y/_w/_h。
+local function layoutTab(tab)
+    local win = tab._win
+    local areaW = (win._controlW or win._sizeX) - PAD_IN * 2
+    local n = math.min(3, math.max(1, math.floor((areaW + GAP) / (MIN_BLOCK + GAP))))
+    local side = (areaW - H_GAP * (n - 1)) / n
+    local x, y, rowH = 0, 0, 0
+    for _, ctrl in ipairs(tab._controls) do
+        local cols = math.max(1, math.floor(ctrl._cols or 1))
+        local rows = math.max(1, math.floor(ctrl._rows or 1))
+        local cw = cols * side + (cols - 1) * H_GAP
+        local ch = rows * side + (rows - 1) * GAP
+        if x + cw > areaW + 0.5 then
+            y = y + rowH + GAP
+            x = 0
+            rowH = 0
+        end
+        ctrl._x = x + cw / 2
+        ctrl._y = y + ch / 2
+        ctrl._w = cw
+        ctrl._h = ch
+        x = x + cw + H_GAP
+        if ch > rowH then rowH = ch end
+    end
+    return y + rowH
+end
+
 local function updateCanvas(win)
     local sc = win._scroller
     if not (sc and sc.Parent) then return end
@@ -1101,11 +1129,22 @@ local function updateCanvas(win)
     local n = math.min(3, math.max(1, math.floor((areaW + GAP) / (MIN_BLOCK + GAP))))
     local side = (areaW - H_GAP * (n - 1)) / n
     for _, t in ipairs(win._tabs) do
-        local rows = math.ceil(#t._controls / n)
-        local h = PAD_IN * 2 + rows * (side + GAP) + PAD_IN
+        local bottom = layoutTab(t)
+        -- 自定义选项卡：网格下方的自定义层，按子控件底边自动撑高
+        local customBottom = 0
+        if t._customLayer then
+            t._customLayer.Position = UDim2.fromOffset(0, bottom + GAP)
+            for _, ch in ipairs(t._customLayer:GetChildren()) do
+                if ch:IsA("GuiObject") and ch.Visible then
+                    local b = ch.Position.Y.Offset + (ch.Size.Y.Offset or 0)
+                    if b > customBottom then customBottom = b end
+                end
+            end
+            t._customLayer.Size = UDim2.new(1, 0, 0, customBottom)
+        end
+        local total = bottom + (t._customLayer and (GAP + customBottom) or 0)
+        local h = PAD_IN * 2 + total + PAD_IN
         if h > need then need = h end
-    end
-    for _, t in ipairs(win._tabs) do
         for _, c in ipairs(t._controls) do
             local h = PAD_IN * 2 + (c._detailBottom or (DETAIL_TOP + 2 * (ROW_H + ROW_GAP))) + PAD_IN
             if h > need then need = h end
@@ -1290,17 +1329,14 @@ showColorPanel = function(p, show)
 end
 
 local function relayout(tab)
-    local win = tab._win
-    local areaW = (win._controlW or win._sizeX) - PAD_IN * 2
-    local n = math.min(3, math.max(1, math.floor((areaW + GAP) / (MIN_BLOCK + GAP))))
-    local side = (areaW - H_GAP * (n - 1)) / n
-    for i, ctrl in ipairs(tab._controls) do
-        local col = (i - 1) % n
-        local row = math.floor((i - 1) / n)
-        ctrl._block.Size = UDim2.new(0, side, 0, side)
-        ctrl._block.Position = UDim2.new(0, col * (side + H_GAP) + side / 2, 0, row * (side + GAP) + side / 2)
+    layoutTab(tab)
+    for _, ctrl in ipairs(tab._controls) do
+        if ctrl._block then
+            ctrl._block.Size = UDim2.fromOffset(ctrl._w, ctrl._h)
+            ctrl._block.Position = UDim2.fromOffset(ctrl._x, ctrl._y)
+        end
     end
-    updateCanvas(win)
+    updateCanvas(tab._win)
 end
 
 local function refreshToggle(ctrl, animate)
@@ -2883,6 +2919,163 @@ local function addControl(tab, kind, opts)
     return ctrl
 end
 
+--[[
+    Notice：展示型控件。外观与主控件一致（玻璃质感 + 描边），但不可点击、不进详情页。
+    左上角大标题 + 下方正文。可指定所占格子数（横向 1~3，竖向不限行数）与摆放朝向。
+    opts:
+      Title        string   左上角大标题
+      Text         string   正文（自动换行）
+      Icon         string   标题前的图标（可选）
+      Span         number   横向=所占列数(1~3)；竖向=所占行数(>=1，不限制)
+      Orientation  "Horizontal"|"Vertical"  默认 Horizontal
+      TitleColor / TextColor / IconColor / BackColor  Color3（可选）
+    方法：SetTitle / SetText / SetIcon / SetColors
+]]
+-- 前向声明：makeBold 定义在本函数之后，Luau 不会把后声明的 local 捕获为 upvalue，故先声明
+local makeBold
+local function addNotice(tab, opts)
+    opts = opts or {}
+    local block = makeGlass(tab._container, {
+        Name = "Notice",
+        Size = UDim2.fromOffset(100, 100),
+        Position = UDim2.fromOffset(50, 50),
+        Transparency = 0.55,
+        Radius = UDim.new(0, s(16)),
+        Highlight = 0.86,
+        Plain = true,
+        NoStroke = true,
+    })
+    block.AnchorPoint = Vector2.new(0.5, 0.5)
+    local ctrl = { _tab = tab, _kind = "Notice", _block = block, _opts = opts }
+    ctrlOwner[ctrl] = tab._win
+
+    -- 朝向 + 跨度 → 网格占位
+    local orient = (opts.Orientation == "Vertical") and "Vertical" or "Horizontal"
+    local span = math.floor(tonumber(opts.Span) or 1)
+    if orient == "Horizontal" then
+        ctrl._cols = math.clamp(span, 1, 3)   -- 横向限制：最多 3 格（一行）
+        ctrl._rows = 1
+    else
+        ctrl._cols = 1
+        ctrl._rows = math.max(1, span)         -- 竖向不限制行数
+    end
+
+    -- 与主控件一致的描边
+    local border = Instance.new("Frame", block)
+    border.Name = "Border"
+    border.Size = UDim2.new(1, -2, 1, -2)
+    border.Position = UDim2.new(0, 1, 0, 1)
+    border.BackgroundTransparency = 1
+    border.BorderSizePixel = 0
+    local borderCorner = Instance.new("UICorner", border)
+    borderCorner.CornerRadius = UDim.new(0, s(15))
+    local borderStroke = Instance.new("UIStroke", border)
+    borderStroke.Color = Style.BlockStroke
+    borderStroke.Transparency = Style.BlockStrokeTransparency
+    borderStroke.Thickness = Style.BlockStrokeThickness
+    borderStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+
+    local pad = s(12)
+    local titleH = s(20)
+
+    local iconLbl
+    if opts.Icon then
+        iconLbl = Instance.new("ImageLabel", block)
+        iconLbl.Name = "NoticeIcon"
+        iconLbl.Size = UDim2.fromOffset(s(20), s(20))
+        iconLbl.Position = UDim2.fromOffset(pad, pad + s(1))
+        iconLbl.BackgroundTransparency = 1
+        iconLbl.ImageColor3 = opts.IconColor or Style.SubText
+        iconLbl.Active = false
+        iconLbl.ZIndex = ZBASE + 2
+        applyIcon(iconLbl, opts.Icon, opts.IconColor or Style.SubText)
+        ctrl._icon = iconLbl
+    end
+
+    local title = Instance.new("TextLabel", block)
+    title.Name = "NoticeTitle"
+    title.BackgroundTransparency = 1
+    title.Font = Style.Font
+    title.Text = tostring(opts.Title or "")
+    title.TextSize = s(16)
+    title.TextColor3 = opts.TitleColor or Style.Text
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.TextYAlignment = Enum.TextYAlignment.Top
+    title.TextWrapped = false
+    title.RichText = false
+    title.Active = false
+    title.ZIndex = ZBASE + 2
+    makeBold(title)
+    local iconShift = (opts.Icon and s(26) or 0)
+    title.Size = UDim2.new(1, -(pad * 2 + iconShift), 0, titleH)
+    title.Position = UDim2.fromOffset(pad + iconShift, pad)
+    ctrl._title = title
+
+    local body = Instance.new("TextLabel", block)
+    body.Name = "NoticeText"
+    body.BackgroundTransparency = 1
+    body.Font = Style.Font
+    body.Text = tostring(opts.Text or "")
+    body.TextSize = s(13)
+    body.TextColor3 = opts.TextColor or Style.SubText
+    body.TextXAlignment = Enum.TextXAlignment.Left
+    body.TextYAlignment = Enum.TextYAlignment.Top
+    body.TextWrapped = true
+    body.RichText = false
+    body.Active = false
+    body.ZIndex = ZBASE + 2
+    body.Size = UDim2.new(1, -(pad * 2 + iconShift), 1, -(pad * 2 + titleH + s(8)))
+    body.Position = UDim2.fromOffset(pad + iconShift, pad + titleH + s(8))
+    ctrl._text = body
+
+    if opts.BackColor then
+        block.BackgroundColor3 = opts.BackColor
+        local bg = block:FindFirstChildOfClass("UIGradient")
+        if bg then bg:Destroy() end
+    end
+
+    function ctrl:SetTitle(t)
+        if self._title then self._title.Text = tostring(t or "") end
+    end
+    function ctrl:SetText(t)
+        if self._text then self._text.Text = tostring(t or "") end
+    end
+    function ctrl:SetIcon(ic, color)
+        color = color or Style.SubText
+        if self._icon then
+            applyIcon(self._icon, ic, color)
+            self._icon.ImageColor3 = color
+        else
+            local il = Instance.new("ImageLabel", block)
+            il.Name = "NoticeIcon"
+            il.Size = UDim2.fromOffset(s(20), s(20))
+            il.Position = UDim2.fromOffset(pad, pad + s(1))
+            il.BackgroundTransparency = 1
+            il.ImageColor3 = color
+            il.Active = false
+            il.ZIndex = ZBASE + 2
+            applyIcon(il, ic, color)
+            self._icon = il
+        end
+    end
+    function ctrl:SetColors(c)
+        c = c or {}
+        if c.TitleColor and self._title then self._title.TextColor3 = c.TitleColor end
+        if c.TextColor and self._text then self._text.TextColor3 = c.TextColor end
+        if c.IconColor and self._icon then self._icon.ImageColor3 = c.IconColor end
+        if c.BackColor then
+            block.BackgroundColor3 = c.BackColor
+            local bg = block:FindFirstChildOfClass("UIGradient")
+            if bg then bg:Destroy() end
+        end
+    end
+
+    table.insert(tab._controls, ctrl)
+    noteTree(block)
+    relayout(tab)
+    return ctrl
+end
+
 function selectTab(win, activeIdx)
     if win._detail then closeDetail(win) end
     win._activeTab = activeIdx
@@ -2968,7 +3161,7 @@ local function measureText(text, size, font)
     return #tostring(text) * size * 0.55
 end
 
-local function makeBold(label)
+makeBold = function(label)
     local done = false
     pcall(function()
         local base = Font.fromEnum(Style.Font)
@@ -4080,6 +4273,9 @@ function Library.CreateWindow(opts)
     end
 
     local previewTweens = {}
+    -- 兜底：preview 的 Position 在创建时写死，窗口被拖动后若直接 tween 会从旧位置“飞”过来。
+    -- 每次从隐藏恢复显示时，先把位置/尺寸瞬移到位（snap），后续拖动再平滑过渡。
+    local previewSnapPending = true
     local function restorePreviewAlpha()
         preview.BackgroundTransparency = PREVIEW_FILL
         if pvStroke then pvStroke.Transparency = 0 end
@@ -4088,13 +4284,21 @@ function Library.CreateWindow(opts)
         pcall(function() setGroupTransparency(preview, 0, true) end)
         restorePreviewAlpha()
         preview.Visible = true
+        previewSnapPending = true
     end
     local function hidePreview()
         preview.Visible = false
         restorePreviewAlpha()
+        previewSnapPending = false
     end
     local function tweenPreview(nw, nh, cx, cy)
         showPreview()
+        if previewSnapPending then
+            previewSnapPending = false
+            preview.Size = UDim2.fromOffset(nw, nh)
+            preview.Position = UDim2.fromOffset(cx, cy)
+            return
+        end
         local ti = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         for _, tw in ipairs(previewTweens) do pcall(function() tw:Cancel() end) end
         previewTweens = {}
@@ -4848,6 +5052,7 @@ function Library:AddTab(name, icon)
 
     function tab:AddToggle(o) return addControl(tab, "Toggle", o) end
     function tab:AddButton(o) return addControl(tab, "Button", o) end
+    function tab:AddNotice(o) return addNotice(tab, o) end
 
     attachClickFx(row, { tint = Color3.new(1, 1, 1), peak = 0.68, radius = UDim.new(0, s(7)) })
     row.MouseButton1Click:Connect(function() selectTab(self, idx) end)
@@ -4855,6 +5060,34 @@ function Library:AddTab(name, icon)
     table.insert(self._tabs, tab)
     updateCanvas(self)
     if #self._tabs == 1 then selectTab(self, 1) end
+    return tab
+end
+
+--[[
+    AddCustomTab：同样是一个选项卡 + 滑动容器，但除库内控件外，所有 UI 都可自定义创建。
+    返回 tab 对象，除常规的 AddToggle/AddButton/AddNotice 外，额外暴露：
+      tab.Container   —— 网格下方的自定义层（Frame），把任意自建 UI 以绝对坐标父于此即可
+      tab:Refresh()   —— 重新计算滚动画布高度（父入自定义 UI 后调用）
+]]
+function Library:AddCustomTab(name, icon)
+    local tab = self:AddTab(name, icon)
+
+    local layer = Instance.new("Frame", tab._container)
+    layer.Name = "CustomLayer"
+    layer.Size = UDim2.new(1, 0, 0, 0)
+    layer.Position = UDim2.fromOffset(0, 0)
+    layer.BackgroundTransparency = 1
+    layer.BorderSizePixel = 0
+    layer.ClipsDescendants = false
+    setGroupTransparency(layer, 0)
+    tab._customLayer = layer
+    tab.Container = layer
+
+    function tab:Refresh()
+        updateCanvas(self._win)
+    end
+
+    updateCanvas(self)
     return tab
 end
 
