@@ -4739,7 +4739,7 @@ function Library.CreateWindow(opts)
     -- 居中大下拉（列出 config 名称，展开为可滚动列表，选中项银白渐变高亮）、
     -- 底部三按钮（Delete / Save / Load）。互斥于 Settings 打开，并启用输入盾。
     do
-        local cfgOverlay = Instance.new("Frame", gui)
+        local cfgOverlay = Instance.new("TextButton", gui)
         cfgOverlay.Name = "ConfigOverlay"
         cfgOverlay.Size = UDim2.fromScale(1, 1)
         cfgOverlay.Position = UDim2.fromOffset(0, 0)
@@ -4750,6 +4750,8 @@ function Library.CreateWindow(opts)
         cfgOverlay.Visible = false
         cfgOverlay.ClipsDescendants = false
         cfgOverlay.Active = true
+        cfgOverlay.Text = ""
+        cfgOverlay.AutoButtonColor = false
         local cfgOvCorner = Instance.new("UICorner", cfgOverlay)
         cfgOvCorner.CornerRadius = UDim.new(0, s(24))
 
