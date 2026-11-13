@@ -522,6 +522,195 @@ Win:OnLanguageChanged(function(v)
 end)
 
 -- ============================================================
+-- 11. 自定义选项卡（AddCustomTab）：库内控件 + 任意自定义 UI
+-- ============================================================
+-- 这是一个选项卡，也是一个滑动容器；除了库内置控件，还能在里面创建任意自定义 UI。
+local TabCustom = Win:AddCustomTab("Custom", "layout-customize")
+-- 前向声明：refreshStats 会引用下方创建的进度条，Luau 不会把后声明的 local 捕获为 upvalue
+local progFill, progLabel
+
+-- 11.1 顶部 Notice：占 3 格（一行），介绍 AsLabUI 特点
+TabCustom:AddNotice({
+    Title = "AsLab UI 特点",
+    Text = "轻量玻璃拟态 · 无头可测 · 长按主开关打开详情页 · 多配置槽持久化 · 动态下拉 · 通知胶囊 · 自定义选项卡。一套 API 覆盖脚本的全部界面需求。",
+    Span = 3,
+    Orientation = "Horizontal",
+})
+
+-- 11.2 下方左右两个区域的 Notice 栏（用自定义面板实现，各占一半宽度）
+local areaW = (Win._controlW or 536)
+local uGap = 12
+local halfW = math.max(140, math.floor((areaW - uGap) / 2))
+local barH = 140
+
+-- 复刻库内玻璃观感的面板（库外代码也可自建 UI）
+local function glassPanel(parent, x, y, w, h, title)
+    local f = Instance.new("Frame", parent)
+    f.Name = "CustomPanel"
+    f.Size = UDim2.fromOffset(w, h)
+    f.Position = UDim2.fromOffset(x, y)
+    f.BackgroundColor3 = Color3.fromRGB(26, 28, 36)
+    f.BackgroundTransparency = 0.62
+    f.BorderSizePixel = 0
+    f.ClipsDescendants = true
+    local corner = Instance.new("UICorner", f)
+    corner.CornerRadius = UDim.new(0, 16)
+    local grad = Instance.new("UIGradient", f)
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 43, 54)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(26, 28, 36)),
+    })
+    local stroke = Instance.new("UIStroke", f)
+    stroke.Color = Color3.fromRGB(80, 86, 110)
+    stroke.Transparency = 0.55
+    stroke.Thickness = 1
+    local t = Instance.new("TextLabel", f)
+    t.Size = UDim2.fromOffset(w - 28, 22)
+    t.Position = UDim2.fromOffset(14, 10)
+    t.BackgroundTransparency = 1
+    t.Text = title or ""
+    t.TextSize = 15
+    t.TextColor3 = Color3.fromRGB(235, 238, 248)
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.TextYAlignment = Enum.TextYAlignment.Top
+    t.RichText = false
+    t.TextWrapped = false
+    return f
+end
+
+local function statLine(parent, x, y, w, text)
+    local t = Instance.new("TextLabel", parent)
+    t.Size = UDim2.fromOffset(w, 20)
+    t.Position = UDim2.fromOffset(x, y)
+    t.BackgroundTransparency = 1
+    t.Text = text or ""
+    t.TextSize = 13
+    t.TextColor3 = Color3.fromRGB(150, 158, 185)
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.TextYAlignment = Enum.TextYAlignment.Top
+    t.RichText = false
+    t.TextWrapped = false
+    return t
+end
+
+-- 左栏：Time / FPS / Network
+local leftBar = glassPanel(TabCustom.Container, 0, 0, halfW, barH, "Time / FPS / Network")
+local lTime = statLine(leftBar, 14, 42, halfW - 28, "Time:    --")
+local lFps = statLine(leftBar, 14, 66, halfW - 28, "FPS:     --")
+local lNet = statLine(leftBar, 14, 90, halfW - 28, "Network: --")
+
+-- 右栏：在线玩家 / 本地玩家 / 角色状态
+local rightBar = glassPanel(TabCustom.Container, halfW + uGap, 0, halfW, barH, "Server / LocalPlayer")
+local rPlayers = statLine(rightBar, 14, 42, halfW - 28, "在线玩家: --")
+local rName = statLine(rightBar, 14, 66, halfW - 28, "本地玩家: --")
+local rChar = statLine(rightBar, 14, 90, halfW - 28, "角色状态: --")
+
+-- 11.3 实时读取数据（headless 下服务可能缺失，全部 pcall 兜底为占位符）
+local function readStats()
+    local d = { time = "--", fps = "--", net = "--", players = "--", name = "--", char = "--" }
+    pcall(function()
+        d.time = os and os.date and os.date("%H:%M:%S") or tostring(math.floor(tick()))
+    end)
+    pcall(function()
+        local stats = game:GetService("Stats")
+        local fr = stats and stats:FindFirstChild("FrameRate")
+        if fr then d.fps = tostring(math.floor((fr.Value or 0) + 0.5)) end
+        local net = stats and stats:FindFirstChild("Network")
+        local item = net and net:FindFirstChild("ServerStatsItem")
+        if item then
+            local rx = item:GetAttribute("Data Receive Rate (KB/s)")
+            if rx ~= nil then d.net = tostring(rx) .. " KB/s" end
+        end
+    end)
+    pcall(function()
+        local ps = game:GetService("Players")
+        d.players = tostring(#ps:GetPlayers())
+        local lp = ps.LocalPlayer
+        if lp then
+            d.name = lp.Name
+            local char = lp.Character
+            d.char = (char and char:FindFirstChildOfClass("Humanoid")) and "已生成" or "未生成"
+        end
+    end)
+    return d
+end
+
+local function refreshStats()
+    local ok, d = pcall(readStats)
+    if not ok or not d then return end
+    pcall(function()
+        lTime.Text = "Time:    " .. d.time
+        lFps.Text = "FPS:     " .. d.fps
+        lNet.Text = "Network: " .. d.net
+        rPlayers.Text = "在线玩家: " .. d.players
+        rName.Text = "本地玩家: " .. d.name
+        rChar.Text = "角色状态: " .. d.char
+        local fpsN = tonumber(d.fps) or 0
+        progFill.Size = UDim2.new(math.clamp(fpsN / 120, 0, 1), 0, 1, 0)
+        progLabel.Text = "FPS 进度: " .. d.fps
+    end)
+end
+
+-- 11.4 下方再添加一些自定义 UI：自定义按钮 + 自定义进度条
+local uiY = barH + 18
+local custBtn = Instance.new("TextButton", TabCustom.Container)
+custBtn.Name = "CustomButton"
+custBtn.Size = UDim2.fromOffset(halfW, 40)
+custBtn.Position = UDim2.fromOffset(0, uiY)
+custBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 255)
+custBtn.BackgroundTransparency = 0.15
+custBtn.BorderSizePixel = 0
+custBtn.AutoButtonColor = false
+custBtn.Text = "点击切换 (Custom UI)"
+custBtn.TextSize = 14
+custBtn.TextColor3 = Color3.fromRGB(240, 244, 255)
+custBtn.RichText = false
+local custBtnCorner = Instance.new("UICorner", custBtn)
+custBtnCorner.CornerRadius = UDim.new(0, 10)
+local custOn = false
+custBtn.MouseButton1Click:Connect(function()
+    custOn = not custOn
+    custBtn.BackgroundColor3 = custOn and Color3.fromRGB(120, 200, 140) or Color3.fromRGB(70, 130, 255)
+    custBtn.Text = custOn and "已开启 (Custom UI)" or "点击切换 (Custom UI)"
+end)
+
+local progTrack = Instance.new("Frame", TabCustom.Container)
+progTrack.Name = "CustomProgress"
+progTrack.Size = UDim2.fromOffset(halfW, 40)
+progTrack.Position = UDim2.fromOffset(halfW + uGap, uiY)
+progTrack.BackgroundColor3 = Color3.fromRGB(40, 43, 54)
+progTrack.BackgroundTransparency = 0.5
+progTrack.BorderSizePixel = 0
+local progCorner = Instance.new("UICorner", progTrack)
+progCorner.CornerRadius = UDim.new(0, 8)
+progFill = Instance.new("Frame", progTrack)
+progFill.Size = UDim2.new(0, 0, 1, 0)
+progFill.BackgroundColor3 = Color3.fromRGB(120, 200, 140)
+progFill.BorderSizePixel = 0
+local pfCorner = Instance.new("UICorner", progFill)
+pfCorner.CornerRadius = UDim.new(0, 8)
+progLabel = Instance.new("TextLabel", progTrack)
+progLabel.Size = UDim2.fromScale(1, 1)
+progLabel.BackgroundTransparency = 1
+progLabel.Text = "FPS 进度: --"
+progLabel.TextSize = 13
+progLabel.TextColor3 = Color3.fromRGB(235, 238, 248)
+progLabel.RichText = false
+
+-- 自定义选项卡：父入自定义 UI 后刷新滚动画布高度
+TabCustom:Refresh()
+refreshStats()
+pcall(function()
+    task.spawn(function()
+        while true do
+            pcall(refreshStats)
+            task.wait(1)
+        end
+    end)
+end)
+
+-- ============================================================
 -- 9. 键盘：N 键弹通知；绑定键位请在任意控件详情页用 Board-Key
 -- ============================================================
 pcall(function()
