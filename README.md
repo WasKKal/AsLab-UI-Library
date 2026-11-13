@@ -17,6 +17,7 @@
 - 🧩 **丰富控件**：窗口、标签页、开关、按钮、滑块、下拉框、取色器、文本段落、展示块一应俱全。
 - ✏️ **运行时可变**：`SetTitle` / `GetTitle` 改标题，`Slider:SetValue` 改数值，`Dropdown:SetOptions` 改选项，全部即时生效并同步配置。
 - 🪟 **多窗口与多配置槽**：支持重复加载自动重建、配置分槽保存 / 另存 / 加载 / 改名 / 删除。
+- 📂 **配置管理器**：底部 `folder-cog` 按钮唤出独立面板，用居中大下拉切换配置，底部「删除 / 保存 / 载入」三按钮显式管理（配色：删除=红黑渐变，保存/载入=银白渐变）。
 - 🛡️ **触摸穿透防护**：拖动窗口、悬浮球、快捷图标或打开设置页时自动启用输入盾，避免视角被误拖动。
 - 🧱 **混合布局**：`Notice` 展示块支持 1~3 格横向跨列 / 竖向不限行；`AddCustomTab` 允许在滑动选项卡内自由创建任意自定义 UI。
 - 🌐 **多语言**：内置中英文案，支持自定义翻译表与运行时 `SetLanguage`。
@@ -202,10 +203,11 @@ local Tab = Win:AddCustomTab("Custom", "layout-customize")
 Tab:AddNotice({ Title = "说明", Text = "…", Span = 3 })
 
 -- 2) 任意自定义 UI：父到 Tab.Container，用绝对坐标摆放
-local panel = Instance.new("Frame", Tab.Container)
+local panel = Instance.new("Frame")
+panel.Parent = Tab.Container
 panel.Size = UDim2.fromOffset(240, 140)
 panel.Position = UDim2.fromOffset(0, 0)
--- …继续添加 UICorner / TextLabel / 按钮等
+-- …继续添加 UICorner / TextLabel / 按钮等（同样用「先 new 再 .Parent =」）
 
 -- 3) 父入自定义 UI 后刷新，让滚动画布按内容自动撑高
 Tab:Refresh()
@@ -232,7 +234,9 @@ Tab:Refresh()
 
 ## 💾 配置（多配置槽）
 
-带 `ConfigKey` 的控件会自动落盘到 `AsLab/<Folder>/`：`config.json` 是默认槽，`Configs/<名字>.json` 是其他槽，`active.json` 记录上次使用的槽名。
+> **已从库内移除「自动储存」**：库不再隐式把控件状态落盘。是否保存完全由你通过下方「配置管理器」显式决定，避免脚本在后台静默写盘。
+
+带 `ConfigKey` 的控件在**显式保存**时落盘到 `AsLab/<Folder>/`：`config.json` 是默认槽，`Configs/<名字>.json` 是其他槽，`active.json` 记录上次使用的槽名。
 
 ```lua
 win:SaveConfig()                 -- 保存到当前槽
@@ -249,6 +253,35 @@ win:DeleteConfig("F2")           -- 删除（Default 不可删，删当前槽会
 ```
 
 按键绑定与快捷图标位置随配置一起保存（`__keys` / `__shortcuts`），换槽时一并恢复。
+
+### 📂 配置管理器 Config Manager
+
+底部功能栏在 **Settings** 与 **Close** 之间有一个 `folder-cog` 图标按钮。点击它唤出一个与设置面板结构一致的「配置管理器」面板：
+
+- 左上角标题 **Config Manager**（中文：`配置管理`），右上角 `x` 关闭；
+- 仅一个**居中的大下拉菜单**（模仿 DynamicCow「切换脚本」窗口内的下拉），列出所有 `Configs` 名称；
+- 底部三个英文按钮：**Delete Config / Save Config / Load Config**（中文：`删除配置 / 保存配置 / 载入配置`）；
+  - **Delete Config**：主红→黑微渐变 + 白字；
+  - **Save Config / Load Config**：银白渐变 + 黑字。
+
+行为：
+
+| 操作 | 效果 |
+| --- | --- |
+| 选中某配置 → **Load Config** | 读取并应用该配置，通知「已载入该配置」（`Config Loaded`） |
+| 选中某配置 → **Delete Config** | 删除所选配置、刷新下拉，通知「已删除该配置」（`Config Deleted`）；`Default` 不可删 |
+| **Save Config**（无需预选） | 把当前所有控件状态存为 `Config N.json`（`N` 自动递增：配置1、配置2…），通知「已储存为 xxx.json」（`Saved as`） |
+
+面板文案随 `SetLanguage()` 自动切换（见「多语言」一节），因此中英文用户都能直接使用。
+
+```lua
+-- 打开 / 关闭由底部 folder-cog 按钮驱动；若要编程触发：
+local cfgBtn = findByName("ConfigManager")   -- 底部按钮实例
+cfgBtn.MouseButton1Click:Fire()              -- 打开面板
+-- 面板内：选中下拉项 → 点底部三按钮之一
+```
+
+> 完整示例见 `AsLab_Example.lua`：底部功能栏含 `folder-cog`，Custom 选项卡演示了自定义 UI（双栏玻璃面板 + 进度条 + 按钮），且示例末尾**不再**自动 Load/Save，配置改由手动管理。
 
 ## 🎯 设计理念
 
