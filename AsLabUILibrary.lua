@@ -4782,7 +4782,7 @@ function Library.CreateWindow(opts)
                 and py >= a.Y - 2 and py <= a.Y + sz.Y + 2
         end
 
-        local cpW, cpH = s(340), s(312)
+        local cpW, cpH = s(340), s(286)
         local cfgPanel = makeGlass(gui, {
             Name = "ConfigPanel",
             Size = UDim2.fromOffset(cpW, cpH),
@@ -4874,21 +4874,21 @@ function Library.CreateWindow(opts)
         ddCapLabel.Text = translateKey(win, "No Configs")
         ddCapLabel.ZIndex = SET_Z + 5
         ddCapLabel:SetAttribute("_skipFade", true)
-        local ddArrow = Instance.new("ImageLabel", ddCapsule)
+        local ddArrow = Instance.new("ImageButton", ddCapsule)
         ddArrow.Name = "DdArrow"
         ddArrow.Size = UDim2.fromOffset(s(14), s(14))
         ddArrow.AnchorPoint = Vector2.new(1, 0.5)
         ddArrow.Position = UDim2.new(1, -s(11), 0.5, 0)
         ddArrow.BackgroundTransparency = 1
-        ddArrow.Active = false
-        ddArrow.ZIndex = SET_Z + 5
+        ddArrow.AutoButtonColor = false
+        ddArrow.Active = true
+        ddArrow.ZIndex = SET_Z + 6
         ddArrow:SetAttribute("_skipFade", true)
         applyIcon(ddArrow, "chevron-down", Style.SubText)
-        attachClickFx(ddCapsule, { tint = Style.SubText, peak = 0.5, radius = UDim.new(0, s(10)) })
 
         local ddMenu = Instance.new("Frame", cfgPanel)
         ddMenu.Name = "ConfigMenu"
-        ddMenu.Size = UDim2.fromOffset(ddW, s(150))
+        ddMenu.Size = UDim2.fromOffset(ddW, s(126))
         ddMenu.Position = UDim2.new(0.5, -ddW / 2, 0, s(58) + ddH + s(4))
         ddMenu.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
         ddMenu.BackgroundTransparency = 0.02
@@ -4985,7 +4985,7 @@ function Library.CreateWindow(opts)
             refreshDdHighlights()
         end
 
-        ddCapsule.MouseButton1Click:Connect(function()
+        local function toggleDdMenu()
             if ddMenuOpen then closeDdMenu() return end
             ddMenuOpen = true
             if ddHostZ == nil then ddHostZ = cfgPanel.ZIndex; cfgPanel.ZIndex = ZBASE + 100 end
@@ -4999,7 +4999,9 @@ function Library.CreateWindow(opts)
                 local px, py = inputPoint(input)
                 if not hitTest(ddCapsule, px, py) and not hitTest(ddMenu, px, py) then closeDdMenu() end
             end)
-        end)
+        end
+        ddCapsule.MouseButton1Click:Connect(toggleDdMenu)
+        ddArrow.MouseButton1Click:Connect(toggleDdMenu)
 
         -- 底部三按钮
         local btnY = cpH - s(52)
@@ -5014,15 +5016,24 @@ function Library.CreateWindow(opts)
             b.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
             b.BackgroundTransparency = 0.06
             b.BorderSizePixel = 0
-            i18nText(win, b, textKey)
-            b.Font = Style.Font
-            b.TextSize = s(13)
-            b.TextColor3 = textColor
+            b.Text = ""
             b.AutoButtonColor = false
             b.ZIndex = SET_Z + 4
             gradFn(b)
             local bc = Instance.new("UICorner", b)
             bc.CornerRadius = UDim.new(0, s(9))
+            local txt = Instance.new("TextLabel", b)
+            txt.Name = "Label"
+            txt.Size = UDim2.fromScale(1, 1)
+            txt.BackgroundTransparency = 1
+            txt.Font = Style.Font
+            txt.TextSize = s(13)
+            txt.TextColor3 = textColor
+            txt.TextXAlignment = Enum.TextXAlignment.Center
+            txt.TextYAlignment = Enum.TextYAlignment.Center
+            txt.ZIndex = SET_Z + 6
+            txt:SetAttribute("_skipFade", true)
+            i18nText(win, txt, textKey)
             attachClickFx(b, { tint = Color3.new(0, 0, 0), peak = 0.65, radius = UDim.new(0, s(9)) })
             return b
         end
