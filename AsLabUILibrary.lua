@@ -180,6 +180,19 @@ local DEFAULT_CN = {
     ["Are you sure you want to close?"] = "确定要关闭窗口吗？",
     ["Tap A Key"] = "请按一个键",
     ["Conflict with"] = "冲突于",
+    -- Config Manager（配置管理面板）文案
+    ["Config Manager"] = "配置管理",
+    ["Delete Config"] = "删除配置",
+    ["Save Config"] = "保存配置",
+    ["Load Config"] = "载入配置",
+    ["Select Config"] = "选择配置",
+    ["No Configs"] = "暂无配置",
+    ["Config Loaded"] = "已载入该配置",
+    ["Config Deleted"] = "已删除该配置",
+    ["Config Saved"] = "已储存配置",
+    ["Saved as"] = "已储存为",
+    ["Select a config first"] = "请先选择配置",
+    ["Cannot delete default config"] = "无法删除默认配置",
 }
 
 local function translateKey(win, key)
@@ -377,31 +390,20 @@ local function syncConfigValue(ctrl)
     local v = ctrl and ctrl._configValue
     if not v then return end
     local value = ctrl._configCurrent
-    local first = (ctrl._cfgSynced ~= true)
-    local changed = false
     pcall(function()
         if v:IsA("BoolValue") then
-            local b = not not value
-            changed = (v.Value ~= b)
-            v.Value = b
+            v.Value = not not value
         elseif v:IsA("NumberValue") then
-            local n = tonumber(value) or 0
-            changed = (v.Value ~= n)
-            v.Value = n
+            v.Value = tonumber(value) or 0
         elseif v:IsA("Color3Value") then
-            changed = (v.Value ~= value)
             v.Value = value
         elseif v:IsA("StringValue") then
-            local str = tostring(value or "")
-            changed = (v.Value ~= str)
-            v.Value = str
+            v.Value = tostring(value or "")
         end
     end)
     ctrl._cfgSynced = true
-    if changed and not first then
-        local w = ctrlOwner[ctrl]
-        if w and type(w._autoSave) == "function" then pcall(w._autoSave, w) end
-    end
+    -- 自动储存已移除：控件状态只同步到内存 Value，不触发任何落盘。
+    -- 配置写盘仅由 Config Manager 的「Save Config」显式调用 SaveConfig 触发。
 end
 
 local HttpService = game:GetService("HttpService")
@@ -547,14 +549,8 @@ function Library:SaveConfig(name)
 end
 
 function Library:_autoSave()
-    if self._loadingConfig or self._savingConfig then return end
-    local gen = (self._saveGen or 0) + 1
-    self._saveGen = gen
-    task.delay(0.4, function()
-        if self._saveGen ~= gen then return end
-        if self._loadingConfig or self._savingConfig then return end
-        pcall(function() self:SaveConfig() end)
-    end)
+    -- 自动储存已移除：保留空实现仅为兼容旧调用，不再落盘。
+    return self
 end
 
 function Library:LoadConfig(name)
@@ -1770,7 +1766,7 @@ createShortcut = function(win, ctrl)
     syncShortcut(ctrl)
     fadeGroup(sc, 0)
     if ctrl._refreshAdd then pcall(ctrl._refreshAdd) end
-    if not win._loadingConfig then pcall(function() win:SaveConfig() end) end
+    -- 自动储存已移除：此处不再触发 SaveConfig
 
     local dragging, moved, startX, startY, originX, originY, moveConn, endConn, haveStart
     local scaleTween, pressTween
@@ -1796,7 +1792,7 @@ createShortcut = function(win, ctrl)
         if fire and not moved then
             fireClick(ctrl)
         end
-        if moved and not win._loadingConfig then pcall(function() win:SaveConfig() end) end
+        -- 自动储存已移除：此处不再触发 SaveConfig
     end
     local dragStartInput = nil
     hit.InputBegan:Connect(function(input)
@@ -1856,7 +1852,7 @@ destroyShortcut = function(win, ctrl)
         end)
     end
     if ctrl._refreshAdd then pcall(ctrl._refreshAdd) end
-    if not win._loadingConfig then pcall(function() win:SaveConfig() end) end
+    -- 自动储存已移除：此处不再触发 SaveConfig
 end
 
 startListen = function(win, ctrl, label)
@@ -3668,6 +3664,7 @@ end
 local function collapse(win)
     if win._collapsed then return end
     if win._closeSettings then pcall(win._closeSettings) end
+    if win._closeConfig then pcall(win._closeConfig) end
     win._collapsed = true
     win._panelAnimGen = (win._panelAnimGen or 0) + 1
     local gen = win._panelAnimGen
@@ -4049,7 +4046,9 @@ function Library.CreateWindow(opts)
     local fstep = fbtn + s(6)
     local minBtn = makeFooterButton("Minimize", "minimize", fbtnX, "_")
     local settingsBtn = makeFooterButton("Settings", "monitor-cog", fbtnX + fstep, "S")
-    local closeBtn = makeFooterButton("Close", "x", fbtnX + fstep * 2, "X")
+    -- 新增：Config Manager（folder-cog），夹在 Settings 与 Close 之间
+    local configBtn = makeFooterButton("ConfigManager", "folder-cog", fbtnX + fstep * 2, "C")
+    local closeBtn = makeFooterButton("Close", "x", fbtnX + fstep * 3, "X")
 
     local orb = Instance.new("Frame", gui)
     orb.Name = "Orb"
@@ -4587,7 +4586,7 @@ function Library.CreateWindow(opts)
         win._mainPosBeforeCollapse = UDim2.fromOffset(nx, ny)
         win._settingsLanguage = settingsLanguage
         win:SetLanguage(settingsLanguage)
-        pcall(function() win:SaveConfig() end)
+        -- 自动储存已移除：此处不再触发 SaveConfig
         closeSettings()
     end
 
@@ -4734,6 +4733,393 @@ function Library.CreateWindow(opts)
     closeBtn.MouseButton1Click:Connect(openConfirm)
     minBtn.MouseButton1Click:Connect(function() collapse(win) end)
     settingsBtn.MouseButton1Click:Connect(function() openSettings() end)
+
+    -- ===================== Config Manager（配置管理面板） =====================
+    -- folder-cog 唤起，与 Setting 同款面板结构：标题 Config Manager、右上 x、
+    -- 居中大下拉（列出 config 名称，展开为可滚动列表，选中项银白渐变高亮）、
+    -- 底部三按钮（Delete / Save / Load）。互斥于 Settings 打开，并启用输入盾。
+    do
+        local cfgOverlay = Instance.new("Frame", gui)
+        cfgOverlay.Name = "ConfigOverlay"
+        cfgOverlay.Size = UDim2.fromScale(1, 1)
+        cfgOverlay.Position = UDim2.fromOffset(0, 0)
+        cfgOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
+        cfgOverlay.BackgroundTransparency = 0.55
+        cfgOverlay.BorderSizePixel = 0
+        cfgOverlay.ZIndex = SET_Z
+        cfgOverlay.Visible = false
+        cfgOverlay.ClipsDescendants = false
+        cfgOverlay.Active = true
+        local cfgOvCorner = Instance.new("UICorner", cfgOverlay)
+        cfgOvCorner.CornerRadius = UDim.new(0, s(24))
+
+        local function silverGradient(parent)
+            local g = Instance.new("UIGradient", parent)
+            g.Rotation = 90
+            g.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Style.SilverTop),
+                ColorSequenceKeypoint.new(1, Style.SilverBottom),
+            })
+            return g
+        end
+        local function redGradient(parent)
+            local g = Instance.new("UIGradient", parent)
+            g.Rotation = 90
+            g.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(214, 62, 62)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(54, 14, 16)),
+            })
+            return g
+        end
+
+        local function hitTest(o, px, py)
+            if not (o and o.Parent) then return false end
+            local a, sz = o.AbsolutePosition, o.AbsoluteSize
+            if not (a and sz) then return false end
+            return px >= a.X - 2 and px <= a.X + sz.X + 2
+                and py >= a.Y - 2 and py <= a.Y + sz.Y + 2
+        end
+
+        local cpW, cpH = s(340), s(312)
+        local cfgPanel = makeGlass(gui, {
+            Name = "ConfigPanel",
+            Size = UDim2.fromOffset(cpW, cpH),
+            Position = UDim2.new(0.5, -cpW / 2, 0.5, -cpH / 2),
+            Transparency = 0.06,
+            Radius = UDim.new(0, s(16)),
+            Color = Color3.fromRGB(22, 23, 29),
+            Plain = true,
+        })
+        cfgPanel.ZIndex = ZBASE + 52
+        cfgPanel.ClipsDescendants = false
+        cfgPanel.Visible = false
+
+        local cfgTitle = Instance.new("TextLabel", cfgPanel)
+        cfgTitle.Name = "ConfigTitle"
+        cfgTitle.Size = UDim2.fromOffset(cpW - s(60), s(26))
+        cfgTitle.Position = UDim2.fromOffset(s(16), s(10))
+        cfgTitle.BackgroundTransparency = 1
+        cfgTitle.Font = Style.Font
+        cfgTitle.TextSize = s(16)
+        cfgTitle.TextColor3 = Style.Text
+        cfgTitle.TextXAlignment = Enum.TextXAlignment.Left
+        cfgTitle.TextYAlignment = Enum.TextYAlignment.Center
+        i18nText(win, cfgTitle, "Config Manager")
+        cfgTitle.ZIndex = SET_Z + 2
+
+        local cfgX = Instance.new("TextButton", cfgPanel)
+        cfgX.Name = "CloseConfig"
+        cfgX.Size = UDim2.fromOffset(s(26), s(26))
+        cfgX.Position = UDim2.fromOffset(cpW - s(36), s(10))
+        cfgX.BackgroundTransparency = 1
+        cfgX.Text = ""
+        cfgX.AutoButtonColor = false
+        cfgX.ZIndex = SET_Z + 2
+        local cfgXIcon = Instance.new("ImageLabel", cfgX)
+        cfgXIcon.Size = UDim2.new(0.7, 0, 0.7, 0)
+        cfgXIcon.Position = UDim2.new(0.15, 0, 0.15, 0)
+        cfgXIcon.BackgroundTransparency = 1
+        cfgXIcon.Active = false
+        cfgXIcon.ZIndex = SET_Z + 3
+        if not applyIcon(cfgXIcon, "x", Style.Text) then
+            cfgX.Text = "X"
+            cfgX.TextColor3 = Style.Text
+            cfgX.Font = Style.Font
+            cfgX.TextSize = s(14)
+        end
+        attachClickFx(cfgX, { tint = Color3.new(1, 1, 1), peak = 0.7, radius = UDim.new(1, 0) })
+
+        -- 居中大下拉：模仿 DynamicCow「切换脚本」窗口。胶囊居中，点击展开
+        -- 可滚动列表，列出 config 名称，选中项以银白渐变高亮。
+        local ddW = cpW - s(48)
+        local ddH = s(36)
+        local selectedConfig = ""
+        local ddMenuOpen = false
+        local ddHostZ = nil
+        local ddOutsideConn = nil
+        local optionRows = {}
+        local ddOptH = s(30)
+
+        local ddCapsule = Instance.new("TextButton", cfgPanel)
+        ddCapsule.Name = "ConfigDropdown"
+        ddCapsule.Size = UDim2.fromOffset(ddW, ddH)
+        ddCapsule.Position = UDim2.new(0.5, -ddW / 2, 0, s(58))
+        ddCapsule.BackgroundColor3 = Color3.fromRGB(38, 38, 48)
+        ddCapsule.BackgroundTransparency = 0.12
+        ddCapsule.BorderSizePixel = 0
+        ddCapsule.Text = ""
+        ddCapsule.AutoButtonColor = false
+        ddCapsule.ZIndex = SET_Z + 4
+        local ddCapCorner = Instance.new("UICorner", ddCapsule)
+        ddCapCorner.CornerRadius = UDim.new(0, s(10))
+        local ddCapStroke = Instance.new("UIStroke", ddCapsule)
+        ddCapStroke.Color = Color3.fromRGB(150, 150, 160)
+        ddCapStroke.Thickness = 1
+        ddCapStroke.Transparency = 0.35
+        ddCapStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+        local ddCapLabel = Instance.new("TextLabel", ddCapsule)
+        ddCapLabel.Name = "DdLabel"
+        ddCapLabel.Size = UDim2.new(1, -s(34), 1, 0)
+        ddCapLabel.Position = UDim2.fromOffset(s(14), 0)
+        ddCapLabel.BackgroundTransparency = 1
+        ddCapLabel.Font = Style.Font
+        ddCapLabel.TextSize = s(13)
+        ddCapLabel.TextColor3 = Color3.new(1, 1, 1)
+        ddCapLabel.TextXAlignment = Enum.TextXAlignment.Center
+        ddCapLabel.TextYAlignment = Enum.TextYAlignment.Center
+        ddCapLabel.TextTruncate = Enum.TextTruncate.AtEnd
+        ddCapLabel.Text = translateKey(win, "No Configs")
+        ddCapLabel.ZIndex = SET_Z + 5
+        ddCapLabel:SetAttribute("_skipFade", true)
+        local ddArrow = Instance.new("ImageLabel", ddCapsule)
+        ddArrow.Name = "DdArrow"
+        ddArrow.Size = UDim2.fromOffset(s(14), s(14))
+        ddArrow.AnchorPoint = Vector2.new(1, 0.5)
+        ddArrow.Position = UDim2.new(1, -s(11), 0.5, 0)
+        ddArrow.BackgroundTransparency = 1
+        ddArrow.Active = false
+        ddArrow.ZIndex = SET_Z + 5
+        ddArrow:SetAttribute("_skipFade", true)
+        applyIcon(ddArrow, "chevron-down", Style.SubText)
+
+        local ddMenu = Instance.new("Frame", cfgPanel)
+        ddMenu.Name = "ConfigMenu"
+        ddMenu.Size = UDim2.fromOffset(ddW, s(150))
+        ddMenu.Position = UDim2.new(0.5, -ddW / 2, 0, s(58) + ddH + s(4))
+        ddMenu.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+        ddMenu.BackgroundTransparency = 0.02
+        ddMenu.BorderSizePixel = 0
+        ddMenu.ClipsDescendants = true
+        ddMenu.Visible = false
+        ddMenu.ZIndex = SET_Z + 20
+        local ddMenuCorner = Instance.new("UICorner", ddMenu)
+        ddMenuCorner.CornerRadius = UDim.new(0, s(10))
+        local ddMenuStroke = Instance.new("UIStroke", ddMenu)
+        ddMenuStroke.Color = Color3.fromRGB(150, 150, 160)
+        ddMenuStroke.Thickness = 1
+        ddMenuStroke.Transparency = 0.45
+        ddMenuStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+
+        local ddScroll = Instance.new("ScrollingFrame", ddMenu)
+        ddScroll.Name = "ConfigScroll"
+        ddScroll.Size = UDim2.fromScale(1, 1)
+        ddScroll.Position = UDim2.fromOffset(0, 0)
+        ddScroll.BackgroundTransparency = 1
+        ddScroll.BorderSizePixel = 0
+        ddScroll.ScrollBarThickness = s(6)
+        ddScroll.ZIndex = SET_Z + 21
+        ddScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        local ddScrollLayout = Instance.new("UIListLayout", ddScroll)
+        ddScrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        ddScrollLayout.Padding = UDim.new(0, s(2))
+
+        local function closeDdMenu()
+            if not ddMenuOpen then return end
+            ddMenuOpen = false
+            if ddHostZ ~= nil then cfgPanel.ZIndex = ddHostZ; ddHostZ = nil end
+            fadeGroup(ddMenu, 1, function() if not ddMenuOpen then ddMenu.Visible = false end end)
+            if ddOutsideConn then pcall(function() ddOutsideConn:Disconnect() end) ddOutsideConn = nil end
+        end
+
+        local function refreshDdHighlights()
+            for _, row in ipairs(optionRows) do
+                local sel = (row.name == selectedConfig)
+                if sel then
+                    row.btn.BackgroundTransparency = 0.06
+                    silverGradient(row.btn)
+                else
+                    row.btn.BackgroundTransparency = 1
+                end
+            end
+        end
+
+        local function buildDdOptions()
+            for _, row in ipairs(optionRows) do
+                if row.btn and row.btn.Parent then row.btn:Destroy() end
+            end
+            optionRows = {}
+            local names = win:GetConfigs()
+            if #names == 0 then
+                selectedConfig = ""
+            elseif selectedConfig == "" or not table.find(names, selectedConfig) then
+                selectedConfig = names[1]
+            end
+            ddCapLabel.Text = selectedConfig ~= "" and selectedConfig or translateKey(win, "No Configs")
+            for i, name in ipairs(names) do
+                local row = Instance.new("TextButton", ddScroll)
+                row.Name = "ConfigOption"
+                row.LayoutOrder = i
+                row.Size = UDim2.new(1, -s(8), 0, ddOptH)
+                row.Position = UDim2.fromOffset(s(4), 0)
+                row.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+                row.BackgroundTransparency = 1
+                row.BorderSizePixel = 0
+                row.Text = ""
+                row.AutoButtonColor = false
+                row.ZIndex = SET_Z + 22
+                local rc = Instance.new("UICorner", row)
+                rc.CornerRadius = UDim.new(0, s(6))
+                local tx = Instance.new("TextLabel", row)
+                tx.Size = UDim2.fromScale(1, 1)
+                tx.BackgroundTransparency = 1
+                tx.Font = Style.Font
+                tx.TextSize = s(12)
+                tx.TextColor3 = Color3.fromRGB(230, 230, 235)
+                tx.TextXAlignment = Enum.TextXAlignment.Center
+                tx.TextYAlignment = Enum.TextYAlignment.Center
+                tx.Text = tostring(name)
+                tx.ZIndex = SET_Z + 23
+                tx:SetAttribute("_skipFade", true)
+                row.MouseButton1Click:Connect(function()
+                    selectedConfig = tostring(name)
+                    ddCapLabel.Text = selectedConfig
+                    refreshDdHighlights()
+                    closeDdMenu()
+                end)
+                optionRows[i] = { btn = row, name = tostring(name) }
+            end
+            refreshDdHighlights()
+        end
+
+        ddCapsule.MouseButton1Click:Connect(function()
+            if ddMenuOpen then closeDdMenu() return end
+            ddMenuOpen = true
+            if ddHostZ == nil then ddHostZ = cfgPanel.ZIndex; cfgPanel.ZIndex = ZBASE + 100 end
+            ddMenu.Visible = true
+            setGroupTransparency(ddMenu, 1)
+            fadeGroup(ddMenu, 0)
+            ddOutsideConn = UserInputService.InputBegan:Connect(function(input)
+                if not ddMenuOpen then return end
+                local t = input.UserInputType
+                if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then return end
+                local px, py = inputPoint(input)
+                if not hitTest(ddCapsule, px, py) and not hitTest(ddMenu, px, py) then closeDdMenu() end
+            end)
+        end)
+
+        -- 底部三按钮
+        local btnY = cpH - s(52)
+        local btnGap = s(10)
+        local btnW = (cpW - s(48) - btnGap * 2) / 3
+        local btnH = s(38)
+        local function makeCfgBtn(textKey, x, gradFn, textColor)
+            local b = Instance.new("TextButton", cfgPanel)
+            b.Name = "Cfg" .. textKey
+            b.Size = UDim2.fromOffset(btnW, btnH)
+            b.Position = UDim2.fromOffset(s(24) + x * (btnW + btnGap), btnY)
+            b.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            b.BackgroundTransparency = 0.06
+            b.BorderSizePixel = 0
+            i18nText(win, b, textKey)
+            b.Font = Style.Font
+            b.TextSize = s(13)
+            b.TextColor3 = textColor
+            b.AutoButtonColor = false
+            b.ZIndex = SET_Z + 4
+            gradFn(b)
+            local bc = Instance.new("UICorner", b)
+            bc.CornerRadius = UDim.new(0, s(9))
+            attachClickFx(b, { tint = Color3.new(0, 0, 0), peak = 0.65, radius = UDim.new(0, s(9)) })
+            return b
+        end
+        local delBtn = makeCfgBtn("Delete Config", 0, redGradient, Color3.new(1, 1, 1))
+        local saveBtn = makeCfgBtn("Save Config", 1, silverGradient, Style.ActiveText)
+        local loadBtn = makeCfgBtn("Load Config", 2, silverGradient, Style.ActiveText)
+
+        local function nextConfigName()
+            local n = 0
+            for _, name in ipairs(win:GetConfigs()) do
+                local m = tostring(name):match("^Config (%d+)$")
+                if m then n = math.max(n, tonumber(m) or 0) end
+            end
+            return "Config " .. tostring(n + 1)
+        end
+
+        local cfgGen = 0
+        local function closeConfig(instant)
+            win._configOpen = false
+            setInputSink(win, "config", false)
+            cfgGen = cfgGen + 1
+            local gen = cfgGen
+            closeDdMenu()
+            if instant then
+                cfgOverlay.Visible = false
+                cfgPanel.Visible = false
+                return
+            end
+            local ti = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            tweenGroup(cfgOverlay, 1, ti, function()
+                if cfgGen == gen and not win._configOpen then cfgOverlay.Visible = false end
+            end, true)
+            tweenGroup(cfgPanel, 1, ti, function()
+                if cfgGen == gen and not win._configOpen then cfgPanel.Visible = false end
+            end, true)
+        end
+        win._closeConfig = closeConfig
+
+        local function openConfig()
+            if win._configOpen then return end
+            win._configOpen = true
+            setInputSink(win, "config", true)
+            cfgGen = cfgGen + 1
+            buildDdOptions()
+            cfgOverlay.Visible = true
+            cfgPanel.Visible = true
+            setGroupTransparency(cfgOverlay, 1, true)
+            setGroupTransparency(cfgPanel, 1, true)
+            local ti = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            tweenGroup(cfgOverlay, 0, ti, nil, true)
+            tweenGroup(cfgPanel, 0, ti, nil, true)
+        end
+
+        delBtn.MouseButton1Click:Connect(function()
+            closeDdMenu()
+            if selectedConfig == "" then
+                win:ShowNotify({ Title = translateKey(win, "Config Manager"), Info = translateKey(win, "Select a config first") })
+                return
+            end
+            if selectedConfig == DEFAULT_CONFIG then
+                win:ShowNotify({ Title = translateKey(win, "Config Manager"), Info = translateKey(win, "Cannot delete default config") })
+                return
+            end
+            if win:DeleteConfig(selectedConfig) then
+                win:ShowNotify({ Title = translateKey(win, "Config Manager"), Info = translateKey(win, "Config Deleted") .. ": " .. selectedConfig })
+                buildDdOptions()
+            end
+        end)
+        saveBtn.MouseButton1Click:Connect(function()
+            closeDdMenu()
+            local name = nextConfigName()
+            pcall(function() win:SaveConfig(name) end)
+            win:ShowNotify({ Title = translateKey(win, "Config Manager"), Info = translateKey(win, "Saved as") .. " " .. name .. ".json" })
+            buildDdOptions()
+        end)
+        loadBtn.MouseButton1Click:Connect(function()
+            closeDdMenu()
+            if selectedConfig == "" then
+                win:ShowNotify({ Title = translateKey(win, "Config Manager"), Info = translateKey(win, "Select a config first") })
+                return
+            end
+            pcall(function() win:LoadConfig(selectedConfig) end)
+            win:ShowNotify({ Title = translateKey(win, "Config Manager"), Info = translateKey(win, "Config Loaded") .. ": " .. selectedConfig })
+        end)
+
+        cfgX.MouseButton1Click:Connect(closeConfig)
+
+        do
+            local function markSkip(node)
+                pcall(function() node:SetAttribute("_skipFade", true) end)
+                for _, ch in ipairs(node:GetChildren()) do markSkip(ch) end
+            end
+            markSkip(cfgOverlay)
+            markSkip(cfgPanel)
+        end
+
+        configBtn.MouseButton1Click:Connect(function()
+            if win._closeSettings then pcall(win._closeSettings) end
+            openConfig()
+        end)
+    end
 
     local winDrag, winMoved, wsx, wsy, wox, woy
     local winMoveConn, winEndConn
@@ -4889,14 +5275,14 @@ function Library.CreateWindow(opts)
                     listen.label.Text = tostring(kc.Name)
                     win._listening = nil
                     refreshConflicts(win)
-                    pcall(function() win:SaveConfig() end)
+                    -- 自动储存已移除：此处不再触发 SaveConfig
                 end
             elseif t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
                 listen.label.Text = KEY_PLACEHOLDER
                 listen.ctrl._keybind = nil
                 win._listening = nil
                 refreshConflicts(win)
-                pcall(function() win:SaveConfig() end)
+                -- 自动储存已移除：此处不再触发 SaveConfig
             end
             return
         end
