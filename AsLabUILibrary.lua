@@ -1027,7 +1027,10 @@ local function makeDropdown(parent, opts)
     capsule.MouseButton1Click:Connect(function()
         if menuOpen then closeMenu() return end
         menuOpen = true
-        if host then hostZ = host.ZIndex; host.ZIndex = 200 end
+        -- 菜单展开时把宿主临时提到库内最高层之上，让下拉浮过所有兄弟元素。
+        -- 切勿写死 200 之类的低绝对值：本库普遍使用 ZBASE+ 的 110000 级 ZIndex，
+        -- 把设置页面板（ZBASE+52）压到 200 会使其沉到遮罩（ZBASE+60）之下、看似消失。
+        if host then hostZ = host.ZIndex; host.ZIndex = ZBASE + 100 end
         menu.Visible = true
         setGroupTransparency(menu, 1)
         fadeGroup(menu, 0)
@@ -1455,6 +1458,7 @@ local function attachClickFx(btn, opts)
     local peak = opts.peak or 0.82
     local radius = opts.radius or UDim.new(0, s(8))
     local ripple = (opts.ripple ~= false)   -- 默认有波纹；ripple=false 时仅保留按压高亮
+    local pressFx = (opts.pressFx ~= false) -- 默认有白色按压高亮；false 时完全不做白色按压/波纹反馈
     local ov = ensureFxLayer(btn, tint, radius)
 
     local sc = btn:FindFirstChildOfClass("UIScale")
@@ -1479,6 +1483,7 @@ local function attachClickFx(btn, opts)
     -- （Luau 不会把“后声明”的 local 捕获为 upvalue，而会回退到 nil 的全局引用）
     local pressUp
     local function pressDown()
+        if not pressFx then return end
         downT = dismiss(downT)
         upT = dismiss(upT)
         downT = TweenService:Create(ov, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -1502,6 +1507,7 @@ local function attachClickFx(btn, opts)
     end
 
     pressUp = function(clicked)
+        if not pressFx then return end
         releaseEndConn()
         downT = dismiss(downT)
         upT = dismiss(upT)
@@ -2713,10 +2719,13 @@ openDetail = function(win, ctrl)
     setGroupTransparency(layer, 1)
     fadeGroup(layer, 0)
     if win._scroller then win._scroller.CanvasPosition = Vector2.new(0, 0) end
-    for _, sh in ipairs(win._shortcuts or {}) do
-        if sh.frame and sh.frame.Parent then
-            fadeGroup(sh.frame, 1, function() if sh.frame and sh.frame.Parent then sh.frame.Visible = false end end)
-        end
+    -- 只隐藏当前详情页所属控件自己的 Shortcut，其它 Shortcut 保持可见，
+    -- 避免进入子选项页面后把无关的快捷入口一并隐藏。
+    local dsc = ctrl._shortcut
+    if dsc and dsc.frame and dsc.frame.Parent then
+        fadeGroup(dsc.frame, 1, function()
+            if win._detail == ctrl and dsc.frame and dsc.frame.Parent then dsc.frame.Visible = false end
+        end)
     end
     win._detail = ctrl
 end
@@ -2746,11 +2755,11 @@ closeDetail = function(win)
             if not win._detail then releaseAllPress(win) end
         end)
     end
-    for _, sh in ipairs(win._shortcuts or {}) do
-        if sh.frame and sh.frame.Parent then
-            sh.frame.Visible = true
-            fadeGroup(sh.frame, 0)
-        end
+    -- 仅恢复当前控件自己的 Shortcut；不触碰其它 Shortcut 的显示状态
+    local dsc = ctrl._shortcut
+    if dsc and dsc.frame and dsc.frame.Parent then
+        dsc.frame.Visible = true
+        fadeGroup(dsc.frame, 0)
     end
     win._detailContainer = nil
 end
@@ -3928,6 +3937,9 @@ function Library.CreateWindow(opts)
     infoLabel.BackgroundTransparency = 1
 
     local bodyY = HEADER_H
+    -- 功能区域不再从标题栏底部开始，而是整体上移靠齐窗口顶部：
+    -- 标题 / Info 只占左侧栏宽度，右侧顶部原本是一整块空白，把控件区顶上去充分利用。
+    local controlTop = PAD / 2
     local sidebar = Instance.new("Frame", main)
     sidebar.Name = "TabList"
     sidebar.Size = UDim2.new(0, SIDEBAR_W, 1, -bodyY - FOOTER_H - PAD)
@@ -3946,9 +3958,9 @@ function Library.CreateWindow(opts)
 
     local controlRegion = Instance.new("Frame", main)
     controlRegion.Name = "ControlRegion"
-    -- 功能控件放在功能区域顶部（去掉原有 8px 顶部间隙）
-    controlRegion.Size = UDim2.new(1, -(PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN), 1, -(bodyY + FOOTER_H + PAD))
-    controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, bodyY)
+    -- 功能区域整体上移靠齐顶部：顶部 = controlTop，底部仍与左侧 Footer 齐平
+    controlRegion.Size = UDim2.new(1, -(PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN), 1, -(controlTop + FOOTER_H + PAD))
+    controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, controlTop)
     controlRegion.BackgroundTransparency = 1
     controlRegion.BorderSizePixel = 0
     controlRegion.ClipsDescendants = false
@@ -4085,7 +4097,8 @@ function Library.CreateWindow(opts)
     orbHit.Text = ""
     orbHit.AutoButtonColor = false
     orbHit.ZIndex = ZBASE + 52
-    attachClickFx(orbHit, { tint = Color3.new(1, 1, 1), peak = 0.72, radius = UDim.new(1, 0), ripple = false })
+    -- 悬浮球以拖动为主：按住拖动时不需要任何白色按压高亮 / 波纹反馈
+    attachClickFx(orbHit, { tint = Color3.new(1, 1, 1), peak = 0.72, radius = UDim.new(1, 0), ripple = false, pressFx = false })
 
     local orbExt = Instance.new("NumberValue", gui)
     orbExt.Name = "OrbExt"
@@ -4129,7 +4142,7 @@ function Library.CreateWindow(opts)
         _settingsScale = 1,
         _settingsLanguage = "English",
         _controlW = Size.X.Offset - (PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN),
-        _viewH = Size.Y.Offset - (HEADER_H + FOOTER_H + PAD),
+        _viewH = Size.Y.Offset - (controlTop + FOOTER_H + PAD),
         _shortcuts = {},
         _listening = nil,
         _detail = nil,
