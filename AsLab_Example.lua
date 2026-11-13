@@ -1,41 +1,19 @@
---[[
-    AsLab UI · 全 API 示例
-    ------------------------------------------------------------
-    覆盖内容：
-      Library.PreloadLucide / GetHolderSource / CreateWindow
-      Win:AddTab / ShowNotify / SetLanguage / GetLanguage / OnLanguageChanged / Translate
-      全文案 i18n：控件标题、Tab 名、窗口标题/Info、通知、ShortCut 文本均随语言切换
-      多配置：SaveConfig(name) / LoadConfig(name) / GetConfigs / GetConfigName / GetConfigPath
-              SetConfig / RenameConfig / DeleteConfig / ConfigExists
-      Tab:AddToggle / AddButton
-      Ctrl:AddSlider / AddToggle / AddButton / AddColorPicker / AddDropdown / AddParagraph
-      Ctrl:SetTitle / GetTitle（主控件与子选项均支持，运行时改标题）
-      Ctrl:Set / SetValue，Dropdown:Get / GetOptions / SetOptions / AddOption / RemoveOption
-      Slider 值可动态改变：子滑块对象 .Set / .SetValue
-      Paragraph:SetTitle / SetInfo / SetIcon / SetIconColor / SetBackColor / GetTitle / GetInfo
-      详情页内置：Board-Key（按键绑定）、AddShortcut（快捷图标创建 / 拖动 / 删除）
-      配置持久化 ConfigKey、窗口设置（比例 / 语言）、关闭二次确认、通知胶囊
-    说明：动态 Dropdown 与多配置 API 需要 AsLabUILibrary 2026-11 之后的版本。
-]]
-
 local Library = loadstring(game:HttpGet("https://ghfast.top/https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/AsLabUILibrary.lua"))()
-Library.PreloadLucide()
+Library.PreloadLucide() -- 检查Lucide图标状态或下载
 
--- ============================================================
--- 1. 创建窗口（演示 CreateWindow 的全部参数）
--- ============================================================
+-- 创建窗口
 local Win = Library.CreateWindow({
-    Title = "TitleBar",
-    TitleIcon = "layout-grid",
-    Info = "ImInfoBar",
-    Size = UDim2.fromOffset(560, 420),
-    -- 背景图留空时使用库内置渐变；填写 URL 会下载到 AsLab/<Folder>/background.png
+    Title = "AsLab", --标题
+    TitleIcon = "layout-grid", --标题图标
+    Info = "ImInfoBar", --额外信息
+    Size = UDim2.fromOffset(560, 420),-- 窗口大小
+    -- 背景图留空时使用库内置渐变;填写 URL 会下载到 AsLab/<Folder>/background.png
     Background = "https://raw.githubusercontent.com/WasKKal/AsLab-UI-Library/main/assets/aslab_wallpaper.png",
-    -- 默认语言：不传为 English；传 "中文" 则首帧即中文
+    -- 默认语言 库默认English 传"中文"则首帧即中文
     Language = "English",
-    -- 配置与背景落在 AsLab/FullDemo/ 下：background.png / config.json
+    -- 配置与背景在 AsLab/FullDemo/ 下 background.png / config.json
     Folder = "FullDemo",
-    -- 自定义标题的翻译表（库内置文案已自带中英）
+    -- 自定义标题的翻译表 库内置文案已自带中英
     Translations = {
         ["中文"] = {
             ["Profile"] = "配置档案",
@@ -48,6 +26,11 @@ local Win = Library.CreateWindow({
             ["Remove Tag"] = "移除标签",
             ["Reset Tags"] = "重置标签",
             ["Refresh Players"] = "刷新玩家",
+            ["Filters"] = "筛选",
+            ["Targets"] = "目标部位",
+            ["Select All"] = "全选",
+            ["Clear Targets"] = "清空目标",
+            ["Only Head"] = "仅头部",
             ["Boost"] = "加速",
             ["Speed"] = "速度",
             ["Jump Power"] = "跳跃力",
@@ -89,14 +72,11 @@ local Win = Library.CreateWindow({
             ["Dynamic"] = "动态",
             ["System"] = "系统",
             ["Notify"] = "通知",
-            -- 窗口标题 / Info / 自定义选项卡
             ["TitleBar"] = "标题栏",
             ["ImInfoBar"] = "信息栏",
             ["Custom"] = "自定义",
-            -- 控件标题
             ["Notes"] = "备注",
             ["Update Note"] = "更新备注",
-            -- 通知固定文案
             ["Paragraph"] = "段落",
             ["Reloaded module list"] = "已重新加载模块列表",
             ["Accent applied to 12 controls"] = "强调色已应用到 12 个控件",
@@ -130,13 +110,11 @@ local Win = Library.CreateWindow({
             ["Key N"] = "按键 N",
             ["Minimize the window and press N again"] = "最小化窗口后再按一次 N",
             ["Switch to"] = "切换到",
-            -- 动态拼接文案里用到的词
             ["added"] = "已添加",
             ["removed"] = "已移除",
             ["total"] = "共",
             ["configs"] = "个配置",
             ["back to"] = "返回",
-            -- 自定义选项卡里的英文标签
             ["Time / FPS / Network"] = "时间 / 帧率 / 网络",
             ["Server / LocalPlayer"] = "服务器 / 本地玩家",
             ["Time:"] = "时间:",
@@ -147,21 +125,15 @@ local Win = Library.CreateWindow({
     },
 })
 
--- 窗口对象提供的只读信息
 print("[AsLab] holder =", Library.GetHolderSource(), "| language =", Win:GetLanguage())
 
--- ============================================================
--- 2. 标签页（图标使用 Lucide 名称）
--- ============================================================
+-- 创建一些选项卡
 local TabGeneral = Win:AddTab("General", "settings")
 local TabVisual = Win:AddTab("Visuals", "palette")
 local TabDynamic = Win:AddTab("Dynamic", "list-checks")
 local TabSystem = Win:AddTab("System", "cpu")
 local TabNotify = Win:AddTab("Notify", "bell")
 
--- ============================================================
--- 3. 通用页：主开关 + 详情页（Slider / Toggle / Button）
--- ============================================================
 local PlayersSvc = game:GetService("Players")
 
 local boostOn, boostSpeed, jumpPower = false, 50, 50
@@ -186,7 +158,7 @@ pcall(function()
     end)
 end)
 
--- 带子选项的主开关：Callback、ConfigKey、Icon 齐全
+-- 带子选项的主开关 Callback ConfigKey Icon 齐全
 local Boost = TabGeneral:AddToggle({
     Title = "Boost",
     Icon = "gauge",
@@ -241,12 +213,12 @@ Boost:AddButton({
     end,
 })
 
--- 段落控件：Title + Info + 可选 Icon，高度随文字自动变化。
+-- 段落控件 Title + Info + 可选 Icon 高度随文字自动变化
 -- AddParagraph 返回对象支持：SetTitle / SetInfo / SetIcon / SetIconColor / SetBackColor / GetTitle / GetInfo
 local Notes = TabGeneral:AddToggle({ Title = "Notes", Icon = "info", Default = false })
 local NotePara
 Notes:AddButton({ Title = "Update Note", Callback = function()
-    -- 动态替换段落文本，控件会重新测量高度并回流排版
+    -- 动态替换段落文本 控件会重新测量高度并排版
     NotePara:SetInfo("这是通过 Paragraph:SetInfo 动态更新的说明文本 —— 段落控件支持运行时替换文字，并自动重新计算高度与排版。")
     Win:ShowNotify({ Title = "Paragraph", Info = "SetInfo() 已更新", Time = 2 })
 end })
@@ -263,9 +235,8 @@ TabGeneral:AddButton({ Title = "Refresh", Icon = "refresh-cw", Callback = functi
     Win:ShowNotify({ Title = "Refresh", Info = "Reloaded module list", Time = 3 })
 end })
 
--- ============================================================
--- 4. 视觉页：ColorPicker / Slider / Toggle / Button 组合
--- ============================================================
+-- 视觉选项卡 ColorPicker / Slider / Toggle / Button 组合
+
 local accent = Color3.fromRGB(120, 170, 255)
 
 local Theme = TabVisual:AddToggle({ Title = "Theme", Icon = "brush", Default = false })
@@ -285,15 +256,50 @@ TabVisual:AddButton({ Title = "Reset Visuals", Icon = "rotate-ccw", Callback = f
     Accent:SetValue(Color3.fromRGB(120, 170, 255))   -- ColorPicker SetValue
 end })
 
--- ============================================================
--- 5. 动态页：运行时增删 Dropdown 选项
--- ============================================================
--- 5.1 联动：Profile 改变时，Preset 的选项整体替换
+-- 动态页 运行时增/删 Dropdown 选项
+-- Profile 改变时 Preset 的选项整体替换
 local presetsByProfile = {
     Default = { "Balanced", "Performance", "Quality" },
     PvP = { "Aggressive", "Defensive", "Sniper", "Support" },
     Farming = { "AFK", "Loop", "Collect" },
 }
+
+-- 多选下拉：加 Multi = true 即多选，不写仍是原来的单选（老代码无需改动）
+-- 子控件在详情页里，长按 Filters 开关即可展开看到 Targets 与下面三个按钮
+local FiltersToggle = TabDynamic:AddToggle({ Title = "Filters", Icon = "filter", Default = false })
+
+local Targets = FiltersToggle:AddDropdown({
+    Title = "Targets",
+    Multi = true,                       -- 多选开关
+    -- Default 可传数组，也可传 "Head,Torso" 字符串
+    Options = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" },
+    Default = { "Head", "Torso" },
+    ConfigKey = "esp_targets",          -- 多选值以 JSON 数组存进配置
+    Callback = function(list)
+        -- 回调收到数组，且按 Options 顺序排列，不看点击先后
+        if #list > 0 then
+            print("[AsLab] targets ->", table.concat(list, ", "), "|", #list)
+        else
+            print("[AsLab] targets -> (none)")
+        end
+    end,
+})
+
+-- 多选的常用操作：全选 / 清空 / 单项开关
+FiltersToggle:AddButton({ Title = "Select All", Icon = "check-square", Callback = function()
+    Targets:Set(Targets:GetOptions())       -- Set 接受 table，也接受 "A,B" 字符串
+    Win:ShowNotify({ Title = "Targets", Info = #Targets:Get() .. " / " .. #Targets:GetOptions(), Time = 2 })
+end })
+
+FiltersToggle:AddButton({ Title = "Clear Targets", Icon = "x", Callback = function()
+    Targets:ClearSelection()                -- 清空后胶囊显示 None / 无
+end })
+
+FiltersToggle:AddButton({ Title = "Only Head", Icon = "crosshair", Callback = function()
+    Targets:Select("Head", true)            -- 单项选中，第二个参数省略则为取反
+    -- 查询单项：Targets:IsSelected("Head")
+    print("[AsLab] head selected ->", Targets:IsSelected("Head"))
+end })
 
 local Profile, Preset
 
@@ -313,13 +319,13 @@ Profile = ProfileToggle:AddDropdown({
     Default = "Default",
     ConfigKey = "profile",
     Callback = function(v)
-        -- SetOptions：整体替换选项列表；原先选中的值不存在时自动回落到第一项
+        -- SetOptions 整体替换选项列表 原先选中的值不存在时自动选中第一项
         Preset:SetOptions(presetsByProfile[v] or presetsByProfile.Default)
         print("[AsLab] profile ->", v, "presets:", #Preset:GetOptions())
     end,
 })
 
--- 5.2 玩家列表：从 Players 服务实时读取，进出房间自动同步
+-- 玩家列表
 local TargetToggle = TabDynamic:AddToggle({ Title = "Target", Icon = "target", Default = false })
 
 local PlayerDropdown = TargetToggle:AddDropdown({
@@ -357,7 +363,7 @@ pcall(function()
     PlayersSvc.PlayerRemoving:Connect(refreshPlayers)
 end)
 
--- 5.3 单条增删：AddOption / RemoveOption
+-- AddOption / RemoveOption
 local TagsToggle = TabDynamic:AddToggle({ Title = "Tags", Icon = "list-checks", Default = false })
 
 local TagDropdown = TagsToggle:AddDropdown({
@@ -393,10 +399,6 @@ end })
 
 TabDynamic:AddButton({ Title = "Refresh Players", Icon = "refresh-cw", Callback = refreshPlayers })
 
--- ============================================================
--- 6. 系统页：ESP 透视模块（真正生效：高亮 + 骨架 + 距离过滤 + 颜色）
---    子控件回调直接驱动下方的 ESP 引擎；主开关批量 SetValue 也同样生效。
--- ============================================================
 local ESPPlayers = PlayersSvc
 local ESPRun = game:GetService("RunService")
 local ESPCamera = workspace and workspace.CurrentCamera
@@ -423,7 +425,6 @@ local function espDist(p)
     return (a.Position - b.Position).Magnitude
 end
 
--- R15 / R6 骨架连线（部件名成对）
 local SKEL_R15 = {
     {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
     {"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
@@ -435,7 +436,6 @@ local SKEL_R6 = {
     {"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},{"Torso","Left Leg"},{"Torso","Right Leg"},
 }
 
--- 执行器提供 Drawing 时用骨架线条；没有则退回头顶名称标签（普通客户端也能看到）
 local function getDrawing()
     local ok, d = pcall(function() return Drawing end)
     if ok and type(d) == "table" and d.new then return d end
@@ -474,8 +474,6 @@ local function applyPlayer(p)
     local char = p.Character
     if not char or not char:FindFirstChildOfClass("Humanoid") then clearPlayer(p) return end
     local inRange = espDist(p) <= espState.distance
-
-    -- ① 高亮：Roblox Highlight（AlwaysOnTop 描边）
     if espState.highlight and inRange then
         local hl = hlCache[p]
         if not hl then
@@ -501,8 +499,6 @@ local function applyPlayer(p)
     elseif hlCache[p] then
         pcall(function() hlCache[p]:Destroy() end); hlCache[p] = nil
     end
-
-    -- ② 骨架：优先 Drawing 骨线，否则头顶名称标签
     if espState.skeleton and inRange then
         local DLib = getDrawing()
         if DLib then
@@ -582,8 +578,6 @@ local function refreshESP()
         if p ~= ESPLocal then pcall(applyPlayer, p) end
     end
 end
-
--- 约 8Hz 刷新（距离/位置/颜色）
 local espAcc = 0
 if ESPRun and ESPRun.Heartbeat then
     ESPRun.Heartbeat:Connect(function(dt)
@@ -603,8 +597,6 @@ pcall(function()
     end)
     ESPPlayers.PlayerRemoving:Connect(function(p) clearPlayer(p) end)
 end)
-
--- 控件（回调直接驱动上面的 ESP 引擎）
 local ESP = TabSystem:AddToggle({ Title = "ESP", Icon = "eye", Default = false, ConfigKey = "esp",
     Callback = function(v)
         espState.on = v
@@ -627,20 +619,18 @@ ESP:AddSlider({ Title = "Distance", Min = 0, Max = 2000, Default = 1000, Step = 
 
 TabSystem:AddToggle({ Title = "Performance", Icon = "gauge", Default = false, ConfigKey = "performance" })
 
--- 主控件 SetValue：开关与子控件可以一起批量改
+-- 主控件 SetValue 开关与子控件可以一起批量改
 TabSystem:AddButton({ Title = "Reset Everything", Icon = "trash-2", Callback = function()
     ESP:SetValue(false)                 -- 主 Toggle
     Highlight:SetValue(true)            -- 子 Toggle
     Skeleton:SetValue(false)
     ESPColor:SetValue(Color3.fromRGB(255, 96, 96))
     Boost:SetValue(false)
-    Profile:SetValue("Default")         -- Dropdown（会触发联动刷新 Preset）
+    Profile:SetValue("Default")         -- Dropdown
     Win:ShowNotify({ Title = "Reset", Info = "All controls restored to defaults", Time = 3 })
 end })
 
--- ============================================================
--- 7. 配置页：多配置槽（创建 / 另存 / 加载 / 列举 / 改名 / 删除）
--- ============================================================
+-- 配置相关 懒得写更多注释了
 local TabConfig = Win:AddTab("Config", "database")
 
 local function hasConfig(list, name)
@@ -653,14 +643,14 @@ local ConfigDrop
 
 local ConfigSlot = TabConfig:AddToggle({ Title = "Config Slot", Icon = "server", Default = false })
 
--- 下拉列出所有配置：GetConfigs 读取 AsLab/FullDemo/Configs/*.json
+-- GetConfigs 读取 AsLab/FullDemo/Configs/*.json
 ConfigDrop = ConfigSlot:AddDropdown({
     Title = "Config",
     Options = Win:GetConfigs(),
     Default = Win:GetConfigName(),
     Callback = function(v)
         if cfgSwitching or v == Win:GetConfigName() then return end
-        -- LoadConfig(name)：从指定配置读取并写回所有带 ConfigKey 的控件
+        -- LoadConfig(name) 从指定配置读取并写回所有带 ConfigKey 的控件
         if Win:LoadConfig(v) then
             Win:ShowNotify({ Title = "Config", Info = Win:Translate("Loaded") .. " " .. v, Time = 2 })
         else
@@ -669,7 +659,7 @@ ConfigDrop = ConfigSlot:AddDropdown({
     end,
 })
 
--- 这两个控件带 ConfigKey：换配置槽后值会跟着变，用来肉眼确认「确实从另一个档读回来了」
+-- 这两个控件带 ConfigKey 换配置槽后值会跟着变
 local CfgSpeed = ConfigSlot:AddSlider({ Title = "Speed", Min = 0, Max = 100, Default = 50, Step = 1, ConfigKey = "cfg_speed" })
 local CfgEnabled = ConfigSlot:AddToggle({ Title = "Enabled", Default = true, ConfigKey = "cfg_enabled" })
 
@@ -691,7 +681,7 @@ TabConfig:AddButton({ Title = "Save Config", Icon = "save", Callback = function(
     Win:ShowNotify({ Title = "Saved", Info = Win:GetConfigName() .. " → " .. tostring(Win:GetConfigPath()), Time = 3 })
 end })
 
--- 以当前控件状态另存为一个新配置，并切换过去
+-- 以当前控件状态另存为一个新配置 并切换过去
 TabConfig:AddButton({ Title = "New Config", Icon = "file-pen", Callback = function()
     local list, name = Win:GetConfigs(), nil
     for i = 1, 99 do
@@ -699,7 +689,7 @@ TabConfig:AddButton({ Title = "New Config", Icon = "file-pen", Callback = functi
         if not hasConfig(list, cand) then name = cand break end
     end
     name = name or ("Profile-" .. tostring(os.time()))
-    Win:SaveConfig(name)                 -- 传 name 即「另存为」，并把它设为当前槽
+    Win:SaveConfig(name)                 -- 传 name 即"另存为"  并把它设为当前选中项
     local all = syncConfigDrop(name)
     Win:ShowNotify({ Title = "Created", Info = name .. " · " .. #all .. " " .. Win:Translate("configs"), Time = 3 })
 end })
@@ -714,7 +704,7 @@ TabConfig:AddButton({ Title = "Load Default", Icon = "rotate-ccw", Callback = fu
     end
 end })
 
--- 重命名当前配置（Default 不允许改名）
+-- 重命名当前配置 Default 不允许改名
 TabConfig:AddButton({ Title = "Rename Config", Icon = "pencil", Callback = function()
     local cur = Win:GetConfigName()
     local new = cur .. "-renamed"
@@ -726,7 +716,7 @@ TabConfig:AddButton({ Title = "Rename Config", Icon = "pencil", Callback = funct
     end
 end })
 
--- 删除当前配置（删完回落到 Default 并读回它的值）
+-- 删除当前配置 删完选中到 Default 并读回它的值
 TabConfig:AddButton({ Title = "Delete Config", Icon = "trash-2", Callback = function()
     local cur = Win:GetConfigName()
     if Win:DeleteConfig(cur) then
@@ -738,7 +728,7 @@ TabConfig:AddButton({ Title = "Delete Config", Icon = "trash-2", Callback = func
     end
 end })
 
--- 遍历所有配置（GetConfigs 返回名称数组，Default 固定排第一）
+-- 遍历所有配置 GetConfigs 返回名称数组 Default 固定排第一
 ConfigSlot:AddButton({ Title = "List Configs", Icon = "list", Callback = function()
     local list = Win:GetConfigs()
     for i, n in ipairs(list) do
@@ -747,9 +737,7 @@ ConfigSlot:AddButton({ Title = "List Configs", Icon = "list", Callback = functio
     Win:ShowNotify({ Title = Win:Translate("Configs") .. " (" .. #list .. ")", Info = table.concat(list, ", "), Time = 4 })
 end })
 
--- ============================================================
--- 8. 通知页：ShowNotify + 语言切换
--- ============================================================
+-- 通知相关演示
 TabNotify:AddButton({ Title = "Single", Icon = "bell", Callback = function()
     Win:ShowNotify({ Title = "Hello", Info = "A short toast.", Time = 4 })
 end })
@@ -780,11 +768,10 @@ TabNotify:AddToggle({ Title = "Auto Notify (1s)", Icon = "bell", Default = false
     end)
 end })
 
--- 语言切换：不再用 Toggle，改为单个 Button；点击后用 SetTitle 更新按钮自身标题。
-local LangButton   -- 前向声明：Callback 内需引用自身
+-- 语言切换
+local LangButton
 local function refreshLangTitle()
     local cur = Win:GetLanguage()
-    -- 标题随当前语言变化：English 时提示「切换到 中文」，中文时提示「切换到 English」
     local target = (cur == "English") and "中文" or "English"
     LangButton:SetTitle(Win:Translate("Language") .. ": " .. Win:Translate("Switch to") .. " " .. target)
 end
@@ -793,26 +780,23 @@ LangButton = TabNotify:AddButton({
     Icon = "globe",
     Callback = function()
         Win:SetLanguage(Win:GetLanguage() == "English" and "中文" or "English")  -- 立即切换整套 UI 文案
-        refreshLangTitle()  -- 交互后：用 SetTitle 更新按钮标题
+        refreshLangTitle()  -- 交互后用 SetTitle 更新按钮标题
     end,
 })
 refreshLangTitle()
 
--- 语言变化回调（外部同步自己的文案时使用）
+-- 语言变化回调
 Win:OnLanguageChanged(function(v)
     print("[AsLab] language changed ->", v)
     pcall(refreshLangTitle)   -- 语言变化后同步语言按钮标题
 end)
 
--- ============================================================
--- 11. 自定义选项卡（AddCustomTab）：库内控件 + 任意自定义 UI
--- ============================================================
--- 这是一个选项卡，也是一个滑动容器；除了库内置控件，还能在里面创建任意自定义 UI。
+-- 自定义选项卡AddCustomTab 库内控件 + 任意自定义 UI
+-- 这是一个选项卡 也是一个滑动容器 除了库内置控件 还能在里面创建任意自定义 UI
 local TabCustom = Win:AddCustomTab("Custom", "layout-customize")
--- 前向声明：refreshStats 会引用下方创建的进度条，Luau 不会把后声明的 local 捕获为 upvalue
 local progFill, progLabel
 
--- 11.1 顶部 Notice：占 3 格（一行），介绍 AsLabUI 特点
+-- 顶部 Notice占3格（一行） 介绍 AsLabUI 特点
 TabCustom:AddNotice({
     Title = "AsLab UI 特点",
     Text = "轻量玻璃拟态 · 无头可测 · 长按主开关打开详情页 · 多配置槽持久化 · 动态下拉 · 通知胶囊 · 自定义选项卡。一套 API 覆盖脚本的全部界面需求。",
@@ -820,15 +804,14 @@ TabCustom:AddNotice({
     Orientation = "Horizontal",
 })
 
--- 11.2 下方左右两个区域的 Notice 栏（用自定义面板实现，各占一半宽度）
--- 用自定义层的真实像素宽度算半栏，避免右栏 / 右侧按钮超出容器被截断
+-- 下方左右两个区域的 Notice 栏 用自定义面板实现，各占一半宽度
 local areaW = TabCustom.ContainerWidth or TabCustom.Container.Size.X.Offset
 if not areaW or areaW <= 0 then areaW = (Win._controlW or 536) - 24 end
 local uGap = 12
 local halfW = math.max(120, math.floor((areaW - uGap) / 2))
 local barH = 150
 
--- 复刻库内玻璃观感的面板（库外代码也可自建 UI）
+-- 复刻库内玻璃观感的面板 库外代码也可自建 UI
 local function glassPanel(parent, x, y, w, h, titleKey)
     local f = Instance.new("Frame")
     f.Parent = parent
@@ -885,19 +868,19 @@ local function statLine(parent, x, y, w, text)
     return t
 end
 
--- 左栏：Time / FPS / Network
+-- 左栏 Time / FPS / Network
 local leftBar, leftTitle = glassPanel(TabCustom.Container, 0, 0, halfW, barH, "Time / FPS / Network")
 local lTime = statLine(leftBar, 14, 58, halfW - 28, Win:Translate("Time:") .. "    --")
 local lFps = statLine(leftBar, 14, 82, halfW - 28, Win:Translate("FPS:") .. "     --")
 local lNet = statLine(leftBar, 14, 106, halfW - 28, Win:Translate("Network:") .. " --")
 
--- 右栏：在线玩家 / 本地玩家 / 角色状态
+-- 右栏 在线玩家 / 本地玩家 / 角色状态
 local rightBar, rightTitle = glassPanel(TabCustom.Container, halfW + uGap, 0, halfW, barH, "Server / LocalPlayer")
 local rPlayers = statLine(rightBar, 14, 58, halfW - 28, "在线玩家: --")
 local rName = statLine(rightBar, 14, 82, halfW - 28, "本地玩家: --")
 local rChar = statLine(rightBar, 14, 106, halfW - 28, "角色状态: --")
 
--- 11.3 实时读取数据（headless 下服务可能缺失，全部 pcall 兜底为占位符）
+-- 实时读取数据
 local function readStats()
     local d = { time = "--", fps = "--", net = "--", players = "--", name = "--", char = "--" }
     pcall(function()
@@ -943,7 +926,7 @@ local function refreshStats()
     end)
 end
 
--- 11.4 下方再添加一些自定义 UI：自定义按钮 + 自定义进度条
+-- 下方再添加一些自定义 UI 自定义按钮与自定义进度条
 local uiY = barH + 18
 local custBtn = Instance.new("TextButton")
 custBtn.Parent = TabCustom.Container
@@ -996,7 +979,7 @@ progLabel.TextSize = 13
 progLabel.TextColor3 = Color3.fromRGB(235, 238, 248)
 progLabel.RichText = false
 
--- 自定义选项卡：父入自定义 UI 后刷新滚动画布高度
+-- 自定义选项卡 父入自定义 UI 后刷新滚动画布高度
 TabCustom:Refresh()
 refreshStats()
 pcall(function()
@@ -1008,9 +991,7 @@ pcall(function()
     end)
 end)
 
--- ============================================================
--- 9. 键盘：N 键弹通知；绑定键位请在任意控件详情页用 Board-Key
--- ============================================================
+-- N 键弹通知 绑定键位请在任意控件详情页用 Board-Key
 pcall(function()
     game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
         if processed then return end
@@ -1022,17 +1003,12 @@ pcall(function()
     end)
 end)
 
--- ============================================================
--- 10. 配置说明（已移除启动时的自动 Load/Save：本库不再隐式落盘）
---     配置改为由面板手动管理：点底部 folder-cog 打开 Config Manager，
---     用「保存配置 / 载入配置 / 删除配置」按钮显式操作。
--- ============================================================
-syncConfigDrop()                          -- 仅初始化示例自己的配置下拉展示
+syncConfigDrop()                          -- 初始化示例自己的配置下拉展示
 
 print("AsLab full example ready · language =", Win:GetLanguage(), "· config =", Win:GetConfigName())
 
--- 语言切换：库内控件 / Tab / 窗口标题 / 通知 / ShortCut 已由库自动 i18n；
--- 这里同步示例自己创建的自定义 UI 文案与语言按钮标题。
+-- 语言切换 库内控件 / Tab / 窗口标题 / 通知 / ShortCut 已由库自动 i18n
+-- 这里同步示例自己创建的自定义 UI 文案与语言按钮标题
 Win:OnLanguageChanged(function()
     pcall(refreshLangTitle)
     if leftTitle and leftTitle.Parent then leftTitle.Text = Win:Translate("Time / FPS / Network") end
