@@ -5201,6 +5201,15 @@ function Library.CreateWindow(opts)
         local ddScrollLayout = Instance.new("UIListLayout", ddScroll)
         ddScrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
         ddScrollLayout.Padding = UDim.new(0, s(2))
+        -- 内边距：条目不再贴左边缘被圆角/描边裁切，左右对称留白。
+        -- 右侧多留 2px 给滚动条，避免行被 ScrollBar 压住。
+        -- 注意 UIPadding 只挪位置，不改变 Scale=1 的基准宽度，行宽要自己减掉内边距。
+        local ddPadL, ddPadR = s(6), s(8)
+        local ddScrollPad = Instance.new("UIPadding", ddScroll)
+        ddScrollPad.PaddingLeft = UDim.new(0, ddPadL)
+        ddScrollPad.PaddingRight = UDim.new(0, ddPadR)
+        ddScrollPad.PaddingTop = UDim.new(0, s(4))
+        ddScrollPad.PaddingBottom = UDim.new(0, s(4))
 
         local function closeDdMenu()
             if not ddMenuOpen then return end
@@ -5216,8 +5225,11 @@ function Library.CreateWindow(opts)
                 if sel then
                     row.btn.BackgroundTransparency = 0.06
                     silverGradient(row.btn)
+                    -- 银白底配浅色字看不清，选中项改用深色字
+                    if row.tx then row.tx.TextColor3 = Style.ActiveText end
                 else
                     row.btn.BackgroundTransparency = 1
+                    if row.tx then row.tx.TextColor3 = Color3.fromRGB(230, 230, 235) end
                 end
             end
         end
@@ -5238,8 +5250,9 @@ function Library.CreateWindow(opts)
                 local row = Instance.new("TextButton", ddScroll)
                 row.Name = "ConfigOption"
                 row.LayoutOrder = i
-                row.Size = UDim2.new(1, -s(8), 0, ddOptH)
-                row.Position = UDim2.fromOffset(s(4), 0)
+                -- 宽度交给 UIPadding 内缩，位置由 UIListLayout 接管（不再手写 Position，
+                -- 否则会与布局叠加，导致条目整体偏左、左边缘溢出下拉框）。
+                row.Size = UDim2.new(1, -(ddPadL + ddPadR), 0, ddOptH)
                 row.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
                 row.BackgroundTransparency = 1
                 row.BorderSizePixel = 0
@@ -5265,7 +5278,7 @@ function Library.CreateWindow(opts)
                     refreshDdHighlights()
                     closeDdMenu()
                 end)
-                optionRows[i] = { btn = row, name = tostring(name) }
+                optionRows[i] = { btn = row, tx = tx, name = tostring(name) }
             end
             refreshDdHighlights()
         end
