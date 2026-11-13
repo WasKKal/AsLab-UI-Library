@@ -394,19 +394,236 @@ end })
 TabDynamic:AddButton({ Title = "Refresh Players", Icon = "refresh-cw", Callback = refreshPlayers })
 
 -- ============================================================
--- 6. 系统页：更多子控件 + 主开关批量 SetValue
+-- 6. 系统页：ESP 透视模块（真正生效：高亮 + 骨架 + 距离过滤 + 颜色）
+--    子控件回调直接驱动下方的 ESP 引擎；主开关批量 SetValue 也同样生效。
 -- ============================================================
-local ESP = TabSystem:AddToggle({ Title = "ESP", Icon = "eye", Default = false, ConfigKey = "esp" })
+local ESPPlayers = PlayersSvc
+local ESPRun = game:GetService("RunService")
+local ESPCamera = workspace and workspace.CurrentCamera
+local ESPLocal = ESPPlayers.LocalPlayer
 
-local Highlight = ESP:AddToggle({ Title = "Highlight", Default = true, ConfigKey = "esp_highlight" })
-local Skeleton = ESP:AddToggle({ Title = "Skeleton", Default = false, ConfigKey = "esp_skeleton" })
+local espState = {
+    on = false,
+    highlight = true,
+    skeleton = false,
+    color = Color3.fromRGB(255, 96, 96),
+    distance = 1000,
+}
+local hlCache, tagCache, skelCache = {}, {}, {}
+
+local function espRoot(char)
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+end
+
+local function espDist(p)
+    local a = espRoot(p.Character)
+    local b = ESPLocal and espRoot(ESPLocal.Character)
+    if not a or not b then return math.huge end
+    return (a.Position - b.Position).Magnitude
+end
+
+-- R15 / R6 骨架连线（部件名成对）
+local SKEL_R15 = {
+    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
+    {"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
+    {"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
+    {"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
+    {"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
+}
+local SKEL_R6 = {
+    {"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},{"Torso","Left Leg"},{"Torso","Right Leg"},
+}
+
+-- 执行器提供 Drawing 时用骨架线条；没有则退回头顶名称标签（普通客户端也能看到）
+local function getDrawing()
+    local ok, d = pcall(function() return Drawing end)
+    if ok and type(d) == "table" and d.new then return d end
+    return nil
+end
+
+local function killSkeleton(p)
+    local list = skelCache[p]
+    if list then
+        for _, line in ipairs(list) do pcall(function() line:Remove() end) end
+        skelCache[p] = nil
+    end
+    if tagCache[p] then pcall(function() tagCache[p]:Destroy() end); tagCache[p] = nil end
+end
+
+local function clearPlayer(p)
+    if hlCache[p] then pcall(function() hlCache[p]:Destroy() end); hlCache[p] = nil end
+    killSkeleton(p)
+end
+
+local function clearAllESP()
+    for p in pairs(hlCache) do clearPlayer(p) end
+    for p in pairs(tagCache) do clearPlayer(p) end
+    for p in pairs(skelCache) do clearPlayer(p) end
+end
+
+local function project(worldPos)
+    if not ESPCamera then return nil end
+    local ok, sp = pcall(function() return ESPCamera:WorldToViewportPoint(worldPos) end)
+    if not ok or not sp or sp.Z <= 0 then return nil end
+    return sp.X, sp.Y
+end
+
+local function applyPlayer(p)
+    if not espState.on or p == ESPLocal then clearPlayer(p) return end
+    local char = p.Character
+    if not char or not char:FindFirstChildOfClass("Humanoid") then clearPlayer(p) return end
+    local inRange = espDist(p) <= espState.distance
+
+    -- ① 高亮：Roblox Highlight（AlwaysOnTop 描边）
+    if espState.highlight and inRange then
+        local hl = hlCache[p]
+        if not hl then
+            local ok, inst = pcall(Instance.new, "Highlight")
+            if ok and inst then
+                inst.Name = "AsLabESP"
+                pcall(function() inst.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop end)
+                inst.FillTransparency = 0.72
+                inst.OutlineTransparency = 0
+                inst.Parent = workspace
+                hlCache[p] = inst
+                hl = inst
+            end
+        end
+        if hl then
+            pcall(function()
+                hl.Adornee = char
+                hl.FillColor = espState.color
+                hl.OutlineColor = espState.color
+                hl.Enabled = true
+            end)
+        end
+    elseif hlCache[p] then
+        pcall(function() hlCache[p]:Destroy() end); hlCache[p] = nil
+    end
+
+    -- ② 骨架：优先 Drawing 骨线，否则头顶名称标签
+    if espState.skeleton and inRange then
+        local DLib = getDrawing()
+        if DLib then
+            local bones = char:FindFirstChild("UpperTorso") and SKEL_R15 or SKEL_R6
+            local list = skelCache[p]
+            if not list then
+                list = {}
+                for i = 1, #bones do
+                    local ok, line = pcall(DLib.new, "Line")
+                    if ok and line then
+                        line.Thickness = 1
+                        line.Transparency = 1
+                        list[i] = line
+                    end
+                end
+                skelCache[p] = list
+            end
+            for i, pr in ipairs(bones) do
+                local line = list[i]
+                local a = char:FindFirstChild(pr[1])
+                local b = char:FindFirstChild(pr[2])
+                local x1, y1 = a and project(a.Position) or nil
+                local x2, y2 = b and project(b.Position) or nil
+                if line then
+                    if x1 and x2 then
+                        pcall(function()
+                            line.From = Vector2.new(x1, y1)
+                            line.To = Vector2.new(x2, y2)
+                            line.Color = espState.color
+                            line.Visible = true
+                        end)
+                    else
+                        pcall(function() line.Visible = false end)
+                    end
+                end
+            end
+        else
+            local head = char:FindFirstChild("Head") or espRoot(char)
+            local gui = tagCache[p]
+            if not gui and head then
+                local ok, g = pcall(Instance.new, "BillboardGui")
+                if ok and g then
+                    g.Name = "AsLabESPTag"
+                    g.Size = UDim2.fromOffset(180, 30)
+                    g.StudsOffset = Vector3.new(0, 2.6, 0)
+                    g.AlwaysOnTop = true
+                    g.Parent = char
+                    local lbl = Instance.new("TextLabel")
+                    lbl.Parent = g
+                    lbl.Name = "Tag"
+                    lbl.Size = UDim2.fromScale(1, 1)
+                    lbl.BackgroundTransparency = 1
+                    lbl.TextScaled = true
+                    lbl.Font = Enum.Font.GothamBold
+                    lbl.TextStrokeTransparency = 0.4
+                    tagCache[p] = g
+                    gui = g
+                end
+            end
+            if gui then
+                pcall(function() gui.Adornee = head end)
+                local lbl = gui:FindFirstChild("Tag")
+                if lbl then
+                    lbl.TextColor3 = espState.color
+                    lbl.Text = string.format("%s  [%dm]", p.Name, math.floor(espDist(p)))
+                end
+            end
+        end
+    else
+        killSkeleton(p)
+    end
+end
+
+local function refreshESP()
+    if not espState.on then clearAllESP() return end
+    for _, p in ipairs(ESPPlayers:GetPlayers()) do
+        if p ~= ESPLocal then pcall(applyPlayer, p) end
+    end
+end
+
+-- 约 8Hz 刷新（距离/位置/颜色）
+local espAcc = 0
+if ESPRun and ESPRun.Heartbeat then
+    ESPRun.Heartbeat:Connect(function(dt)
+        if not espState.on then return end
+        espAcc = espAcc + (dt or 0)
+        if espAcc < 0.12 then return end
+        espAcc = 0
+        refreshESP()
+    end)
+end
+pcall(function()
+    ESPPlayers.PlayerAdded:Connect(function(p)
+        p.CharacterAdded:Connect(function()
+            task.wait(0.4)
+            if espState.on then pcall(applyPlayer, p) end
+        end)
+    end)
+    ESPPlayers.PlayerRemoving:Connect(function(p) clearPlayer(p) end)
+end)
+
+-- 控件（回调直接驱动上面的 ESP 引擎）
+local ESP = TabSystem:AddToggle({ Title = "ESP", Icon = "eye", Default = false, ConfigKey = "esp",
+    Callback = function(v)
+        espState.on = v
+        if v then task.defer(refreshESP) else clearAllESP() end
+    end })
+
+local Highlight = ESP:AddToggle({ Title = "Highlight", Default = true, ConfigKey = "esp_highlight",
+    Callback = function(v) espState.highlight = v; if espState.on then refreshESP() end end })
+
+local Skeleton = ESP:AddToggle({ Title = "Skeleton", Default = false, ConfigKey = "esp_skeleton",
+    Callback = function(v) espState.skeleton = v; if espState.on then refreshESP() end end })
 
 local ESPColor = ESP:AddColorPicker({
     Title = "Highlight Color", Default = Color3.fromRGB(255, 96, 96), ConfigKey = "esp_color",
-    Callback = function(c) print("[AsLab] esp color", c) end,
+    Callback = function(c) espState.color = c; if espState.on then refreshESP() end end,
 })
 
-ESP:AddSlider({ Title = "Distance", Min = 0, Max = 2000, Default = 1000, Step = 50, ConfigKey = "esp_distance" })
+ESP:AddSlider({ Title = "Distance", Min = 0, Max = 2000, Default = 1000, Step = 50, ConfigKey = "esp_distance",
+    Callback = function(v) espState.distance = v; if espState.on then refreshESP() end end })
 
 TabSystem:AddToggle({ Title = "Performance", Icon = "gauge", Default = false, ConfigKey = "performance" })
 
@@ -563,26 +780,28 @@ TabNotify:AddToggle({ Title = "Auto Notify (1s)", Icon = "bell", Default = false
     end)
 end })
 
--- 语言切换：子下拉改为子 Button；点击时用新增的 SetTitle 方法同时改主控件 / 子控件标题。
-local LangToggle = TabNotify:AddToggle({ Title = "Language", Icon = "globe", Default = false })
+-- 语言切换：不再用 Toggle，改为单个 Button；点击后用 SetTitle 更新按钮自身标题。
 local LangButton   -- 前向声明：Callback 内需引用自身
-local function refreshLangTitles()
+local function refreshLangTitle()
     local cur = Win:GetLanguage()
-    LangToggle:SetTitle(Win:Translate("Language") .. " [" .. cur .. "]")
-    LangButton:SetTitle(Win:Translate("Switch to") .. " " .. (cur == "English" and "中文" or "English"))
+    -- 标题随当前语言变化：English 时提示「切换到 中文」，中文时提示「切换到 English」
+    local target = (cur == "English") and "中文" or "English"
+    LangButton:SetTitle(Win:Translate("Language") .. ": " .. Win:Translate("Switch to") .. " " .. target)
 end
-LangButton = LangToggle:AddButton({
-    Title = "Switch to 中文",
+LangButton = TabNotify:AddButton({
+    Title = "Language",
+    Icon = "globe",
     Callback = function()
         Win:SetLanguage(Win:GetLanguage() == "English" and "中文" or "English")  -- 立即切换整套 UI 文案
-        -- 新方法：Toggle 与 Button（主控件 / 子控件）都能在运行时改 Title
-        refreshLangTitles()
+        refreshLangTitle()  -- 交互后：用 SetTitle 更新按钮标题
     end,
 })
+refreshLangTitle()
 
 -- 语言变化回调（外部同步自己的文案时使用）
 Win:OnLanguageChanged(function(v)
     print("[AsLab] language changed ->", v)
+    pcall(refreshLangTitle)   -- 语言变化后同步语言按钮标题
 end)
 
 -- ============================================================
@@ -636,6 +855,7 @@ local function glassPanel(parent, x, y, w, h, titleKey)
     stroke.Transparency = 0.55
     stroke.Thickness = 1
     local t = Instance.new("TextLabel")
+    t.Parent = f
     t.Size = UDim2.fromOffset(w - 28, 40)
     t.Position = UDim2.fromOffset(14, 10)
     t.BackgroundTransparency = 1
@@ -814,7 +1034,7 @@ print("AsLab full example ready · language =", Win:GetLanguage(), "· config ="
 -- 语言切换：库内控件 / Tab / 窗口标题 / 通知 / ShortCut 已由库自动 i18n；
 -- 这里同步示例自己创建的自定义 UI 文案与语言按钮标题。
 Win:OnLanguageChanged(function()
-    pcall(refreshLangTitles)
+    pcall(refreshLangTitle)
     if leftTitle and leftTitle.Parent then leftTitle.Text = Win:Translate("Time / FPS / Network") end
     if rightTitle and rightTitle.Parent then rightTitle.Text = Win:Translate("Server / LocalPlayer") end
     pcall(refreshStats)
