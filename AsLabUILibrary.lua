@@ -1392,10 +1392,30 @@ local function refreshToggle(ctrl, animate)
     if ctrl._title then tw(ctrl._title, "TextColor3", fg) end
 end
 
+-- 取按钮自身的圆角形状：波纹/按压层必须与按钮同形，否则圆形波纹会被方形外框裁出四个直角，
+-- 视觉上就是「反馈没有圆角」。优先按钮自己的 UICorner，其次调用方传入值，最后方形。
+local function resolveFxRadius(btn, fallback)
+    local c = btn and btn:FindFirstChildOfClass("UICorner")
+    if c then
+        local r = c.CornerRadius
+        if r then
+            if (r.Scale or 0) > 0 then return UDim.new(1, 0) end
+            if (r.Offset or 0) > 0 then return UDim.new(0, r.Offset) end
+        end
+    end
+    return fallback or UDim.new(0, 0)
+end
+
 local function ensureFxLayer(btn, tint, radius)
     if not (btn and btn.Parent) then return nil end
+    local want = resolveFxRadius(btn, radius)
     local ov = btn:FindFirstChild("ClickFx")
-    if ov then return ov end
+    if ov then
+        -- 按钮的 UICorner 可能在首次调用之后才创建，这里按当前形状同步一次。
+        local oc = ov:FindFirstChildOfClass("UICorner")
+        if oc then oc.CornerRadius = want end
+        return ov
+    end
     local top = btn.ZIndex or 1
     for _, ch in ipairs(btn:GetChildren()) do
         if ch:IsA("GuiObject") and (ch.ZIndex or 1) > top then top = ch.ZIndex end
@@ -1411,7 +1431,7 @@ local function ensureFxLayer(btn, tint, radius)
     ov.ZIndex = top + 1
     ov:SetAttribute("_skipFade", true)
     local oc = Instance.new("UICorner")
-    oc.CornerRadius = radius or UDim.new(0, s(8))
+    oc.CornerRadius = want
     oc.Parent = ov
     ov.Parent = btn
     return ov
@@ -1462,6 +1482,7 @@ local function attachClickFx(btn, opts)
     local ripple = (opts.ripple ~= false)   -- 默认有波纹；ripple=false 时仅保留按压高亮
     local pressFx = (opts.pressFx ~= false) -- 默认有白色按压高亮；false 时完全不做白色按压/波纹反馈
     local ov = ensureFxLayer(btn, tint, radius)
+    if not ov then return end
 
     local sc = btn:FindFirstChildOfClass("UIScale")
     if not sc then
@@ -1561,6 +1582,8 @@ local function releasePress(ctrl)
 end
 
 local function releaseAllPress(win)
+    -- 顺带释放取色拖动会话，避免切页/收起后残留的全局 InputChanged 继续改色
+    if win and win._releaseColorGrab then pcall(win._releaseColorGrab) end
     for _, t in ipairs(win._tabs or {}) do
         for _, c in ipairs(t._controls or {}) do releasePress(c) end
     end
@@ -2596,24 +2619,43 @@ addDetailRow = function(win, ctrl, kind, opts)
                 if obj._configValue then obj._configCurrent = c; syncConfigValue(obj) end
             end
         end
+        -- 独占式指针会话：色相条与 SV 板共用同一条拖动链路。
+        -- 旧实现每次按压都新开一条全局 InputChanged，一旦上一次的 InputEnded 没到达
+        -- （手指滑出控件、执行器丢触摸事件），连接就残留；再按另一块时两条链路同时跑，
+        -- 表现为「拖色相原点时主色区域也跟着变」。这里强制单会话并保留兜底释放。
+        local function releaseColorGrab()
+            local g = win._colorGrab
+            if not g then return end
+            win._colorGrab = nil
+            for _, c in ipairs(g.conns) do pcall(function() c:Disconnect() end) end
+            setInputSink(win, "colorpick", false)
+        end
+        win._releaseColorGrab = releaseColorGrab
+
         local function grab(apply, initial)
+            releaseColorGrab()                 -- 清掉任何残留会话，保证同一时刻只有一条指针链路
             local px, py = inputPoint(initial)
             apply(px, py)
+            -- 拖动期间开启输入盾：手指移出取色面板时不再穿透到 3D 相机
+            setInputSink(win, "colorpick", true)
+            local session = { conns = {} }
             local conn = UserInputService.InputChanged:Connect(function(i)
+                if win._colorGrab ~= session then return end
                 local t = i.UserInputType
                 if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
                     local mx, my = inputPoint(i)
                     apply(mx, my)
                 end
             end)
-            local up
-            up = UserInputService.InputEnded:Connect(function(i)
+            local up = UserInputService.InputEnded:Connect(function(i)
+                if win._colorGrab ~= session then return end
                 local t = i.UserInputType
                 if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
-                    conn:Disconnect()
-                    up:Disconnect()
+                    releaseColorGrab()
                 end
             end)
+            session.conns = { conn, up }
+            win._colorGrab = session
         end
         local function setSV(px, py)
             local p, sz = sv.AbsolutePosition, sv.AbsoluteSize
@@ -2627,7 +2669,19 @@ addDetailRow = function(win, ctrl, kind, opts)
             refresh(true)
         end
 
+        -- 面板底层的触摸拦截层：点面板空白处不再穿透到下层控件/3D 相机。
+        -- ZIndex 低于 svHit/hueHit，不影响两块的取色命中。
+        local panelHit = Instance.new("TextButton", panel)
+        panelHit.Name = "ColorPanelHit"
+        panelHit.Size = UDim2.fromScale(1, 1)
+        panelHit.Position = UDim2.fromOffset(0, 0)
+        panelHit.BackgroundTransparency = 1
+        panelHit.Text = ""
+        panelHit.AutoButtonColor = false
+        panelHit.ZIndex = ZBASE + 1
+
         local svHit = Instance.new("TextButton", panel)
+        svHit.Name = "SVHit"
         svHit.Size = UDim2.fromOffset(svW, svH)
         svHit.Position = UDim2.fromOffset(pad, pad)
         svHit.BackgroundTransparency = 1
@@ -2640,6 +2694,7 @@ addDetailRow = function(win, ctrl, kind, opts)
             grab(setSV, input)
         end)
         local hueHit = Instance.new("TextButton", panel)
+        hueHit.Name = "HueHit"
         hueHit.Size = UDim2.fromOffset(svW, s(12))
         hueHit.Position = UDim2.fromOffset(pad, hueY)
         hueHit.BackgroundTransparency = 1
@@ -3842,10 +3897,14 @@ function Library.CreateWindow(opts)
     -- 输入盾：全屏 Active 透明层。拖动窗口 / 悬浮球 / Shortcut 或设置页打开时显示，
     -- 吃掉落在空白区域的触摸，避免穿透到 3D 相机导致视角移动。
     -- ZIndex 低于 Main 及所有交互层，故不遮挡面板按钮 / 滑块。
-    local inputShield = Instance.new("Frame", gui)
+    -- 必须用 TextButton 而不是 Frame：Roblox 中 Frame.Active 只拦鼠标，
+    -- 触摸(Touch)只由 Button 类 GuiObject 消费。用 Frame 做盾时手指依然穿透到 3D 相机。
+    local inputShield = Instance.new("TextButton", gui)
     inputShield.Name = "InputShield"
     inputShield.Size = UDim2.fromScale(1, 1)
     inputShield.Position = UDim2.fromOffset(0, 0)
+    inputShield.Text = ""
+    inputShield.AutoButtonColor = false
     inputShield.BackgroundTransparency = 1
     inputShield.BorderSizePixel = 0
     inputShield.Active = true
@@ -4259,10 +4318,13 @@ function Library.CreateWindow(opts)
         return g
     end
 
-    local overlay = Instance.new("Frame", main)
+    -- TextButton 而非 Frame：Frame.Active 拦不住 Touch，蒙版会触摸穿透到下层控件。
+    local overlay = Instance.new("TextButton", main)
     overlay.Name = "SettingsOverlay"
     overlay.Size = UDim2.fromScale(1, 1)
     overlay.Position = UDim2.fromOffset(0, 0)
+    overlay.Text = ""
+    overlay.AutoButtonColor = false
     overlay.BackgroundColor3 = Color3.new(0, 0, 0)
     overlay.BackgroundTransparency = 0.55
     overlay.BorderSizePixel = 0
@@ -4603,10 +4665,12 @@ function Library.CreateWindow(opts)
         markSkip(preview)
     end
 
-    local confirmOverlay = Instance.new("Frame", gui)
+    local confirmOverlay = Instance.new("TextButton", gui)
     confirmOverlay.Name = "CloseConfirmOverlay"
     confirmOverlay.Size = UDim2.fromScale(1, 1)
     confirmOverlay.Position = UDim2.fromOffset(0, 0)
+    confirmOverlay.Text = ""
+    confirmOverlay.AutoButtonColor = false
     confirmOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
     confirmOverlay.BackgroundTransparency = 0.55
     confirmOverlay.BorderSizePixel = 0
