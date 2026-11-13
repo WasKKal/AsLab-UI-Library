@@ -1674,9 +1674,10 @@ end
 createShortcut = function(win, ctrl)
     if ctrl._shortcut then return end
     local name = tostring(ctrl._opts.Title or "")
+    local shown = translateKey(win, name)
     local w = s(120)
     pcall(function()
-        local sz = TextService:GetTextSize(name, s(12), Style.Font, Vector2.new(10000, 100))
+        local sz = TextService:GetTextSize(shown, s(12), Style.Font, Vector2.new(10000, 100))
         w = math.max(s(80), sz.X + s(28))
     end)
     local h = s(30)
@@ -1716,7 +1717,7 @@ createShortcut = function(win, ctrl)
 
     local label = Instance.new("TextLabel", sc)
     label.Size = UDim2.fromScale(1, 1)
-    label.Text = name
+    label.Text = shown
     label.Font = Style.Font
     label.TextSize = s(12)
     label.TextColor3 = Style.Text
@@ -1752,6 +1753,20 @@ createShortcut = function(win, ctrl)
     ctrl._shortcut = { frame = sc, silver = silver, label = label }
     table.insert(win._shortcuts, ctrl._shortcut)
     noteTree(sc)
+    -- 语言切换时同步 Shortcut 文字与胶囊宽度（标题可被 SetTitle 运行时改动）
+    i18nDynamic(win, function()
+        if not (label and label.Parent) then return end
+        local t = translateKey(win, tostring(ctrl._opts.Title or ""))
+        label.Text = t
+        if sc and sc.Parent then
+            local nw = w
+            pcall(function()
+                local sz = TextService:GetTextSize(t, s(12), Style.Font, Vector2.new(10000, 100))
+                nw = math.max(s(80), sz.X + s(28))
+            end)
+            sc.Size = UDim2.fromOffset(nw, sc.Size.Y.Offset)
+        end
+    end)
     syncShortcut(ctrl)
     fadeGroup(sc, 0)
     if ctrl._refreshAdd then pcall(ctrl._refreshAdd) end
@@ -2401,6 +2416,9 @@ addDetailRow = function(win, ctrl, kind, opts)
         press.BorderSizePixel = 0
         press.Active = false
         press:SetAttribute("_skipFade", true)
+        -- 按压黑色蒙版需跟随方块的圆角，否则直角会溢出圆角显得突兀
+        local pressCorner = Instance.new("UICorner", press)
+        pressCorner.CornerRadius = UDim.new(0, s(7))
         hit.MouseButton1Down:Connect(function()
             TweenService:Create(press, TweenInfo.new(0.1), { BackgroundTransparency = 0.25 }):Play()
         end)
@@ -2725,14 +2743,7 @@ openDetail = function(win, ctrl)
     setGroupTransparency(layer, 1)
     fadeGroup(layer, 0)
     if win._scroller then win._scroller.CanvasPosition = Vector2.new(0, 0) end
-    -- 只隐藏当前详情页所属控件自己的 Shortcut，其它 Shortcut 保持可见，
-    -- 避免进入子选项页面后把无关的快捷入口一并隐藏。
-    local dsc = ctrl._shortcut
-    if dsc and dsc.frame and dsc.frame.Parent then
-        fadeGroup(dsc.frame, 1, function()
-            if win._detail == ctrl and dsc.frame and dsc.frame.Parent then dsc.frame.Visible = false end
-        end)
-    end
+    -- 进入子选项页面不隐藏任何 Shortcut（包括当前控件自己的），快捷入口始终可见。
     win._detail = ctrl
 end
 
@@ -2761,12 +2772,7 @@ closeDetail = function(win)
             if not win._detail then releaseAllPress(win) end
         end)
     end
-    -- 仅恢复当前控件自己的 Shortcut；不触碰其它 Shortcut 的显示状态
-    local dsc = ctrl._shortcut
-    if dsc and dsc.frame and dsc.frame.Parent then
-        dsc.frame.Visible = true
-        fadeGroup(dsc.frame, 0)
-    end
+    -- 进入时未隐藏任何 Shortcut，退出时也无需恢复
     win._detailContainer = nil
 end
 
@@ -2990,9 +2996,10 @@ local function addControl(tab, kind, opts)
         if ctrl._refreshDetailTitle then pcall(ctrl._refreshDetailTitle) end
         local sc = ctrl._shortcut
         if sc and sc.label then
-            sc.label.Text = newTitle
+            local shown = translateKey(cwin, newTitle)
+            sc.label.Text = shown
             pcall(function()
-                local sz = TextService:GetTextSize(newTitle, s(12), Style.Font, Vector2.new(10000, 100))
+                local sz = TextService:GetTextSize(shown, s(12), Style.Font, Vector2.new(10000, 100))
                 sc.frame.Size = UDim2.fromOffset(math.max(s(80), sz.X + s(28)), sc.frame.Size.Y.Offset)
             end)
         end
@@ -3595,6 +3602,13 @@ function Library:ShowNotify(opts)
     local win = self
     if not (type(win) == "table" and win._gui) then win = Library._activeWindow end
     if not (win and win._gui and win._gui.Parent) then return end
+    -- 通知文案纳入 i18n：固定文案按翻译表转换；动态拼接文案可由调用方先用
+    -- Win:Translate() 处理固定部分，此处再转换是幂等的（已翻译文本原样返回）。
+    local n = {}
+    for k, v in pairs(opts) do n[k] = v end
+    n.Title = translateKey(win, tostring(opts.Title or ""))
+    n.Info = translateKey(win, tostring(opts.Info or ""))
+    opts = n
     if win._panelAnimating then
         table.insert(win._notifyQueue, opts)
         return
@@ -3780,6 +3794,12 @@ end
 
 function Library:GetLanguage()
     return self._language or "English"
+end
+
+-- 把任意文本按当前语言翻译（自定义 / 动态拼接文案用）。
+-- 未登记的 key 原样返回，因此对已翻译文本再次调用是幂等的。
+function Library:Translate(key)
+    return translateKey(self, key)
 end
 
 function Library.CreateWindow(opts)
@@ -4188,6 +4208,7 @@ function Library.CreateWindow(opts)
     win._i18n = {}
     win._i18nDynamic = {}
     win:OnLanguageChanged(function() applyLang(win) end)
+    if titleLabel then i18nText(win, titleLabel, Title) end
     if infoLabel then i18nText(win, infoLabel, InfoText) end
     applyLang(win)
 
