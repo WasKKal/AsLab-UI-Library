@@ -193,6 +193,8 @@ local DEFAULT_CN = {
     ["Saved as"] = "已储存为",
     ["Select a config first"] = "请先选择配置",
     ["Cannot delete default config"] = "无法删除默认配置",
+    ["None"] = "无",
+    ["and %d more"] = "等 %d 项",
 }
 
 local function translateKey(win, key)
@@ -386,6 +388,10 @@ end
 
 local ctrlOwner = setmetatable({}, { __mode = "k" })
 
+-- 前向声明：syncConfigValue 需要把多选数组编码成 JSON 串存进 StringValue，
+-- 具体实现（兼容 HttpService 实例方法 / 全局函数两种环境）在下方 do 块里赋值。
+local jsonEncodeValue, jsonDecodeRaw
+
 local function syncConfigValue(ctrl)
     local v = ctrl and ctrl._configValue
     if not v then return end
@@ -398,7 +404,13 @@ local function syncConfigValue(ctrl)
         elseif v:IsA("Color3Value") then
             v.Value = value
         elseif v:IsA("StringValue") then
-            v.Value = tostring(value or "")
+            if type(value) == "table" then
+                -- 多选 Dropdown：数组序列化成 JSON 串（["A","B"]），保证配置文件可读可回填
+                local ok, enc = pcall(function() return jsonEncodeValue(value) end)
+                v.Value = (ok and type(enc) == "string") and enc or ""
+            else
+                v.Value = tostring(value or "")
+            end
         end
     end)
     ctrl._cfgSynced = true
@@ -408,7 +420,6 @@ end
 
 local HttpService = game:GetService("HttpService")
 
-local jsonEncodeValue, jsonDecodeRaw
 do
     local probe = "__aslab_probe__"
     local ok1, r1 = pcall(function() return HttpService:JSONEncode(probe) end)
@@ -861,7 +872,34 @@ local function makeDropdown(parent, opts)
     local capH = opts.Height or s(26)
     local capPos = opts.Position or UDim2.new(1, -capW - s(10), 0.5, -capH / 2)
     local z = opts.ZIndex or (ZBASE + 8)
+    local multi = opts.Multi == true
+    local tr = opts.Translate          -- 可选：function(key) -> 已本地化模板串
+    local function T(key, ...)
+        local text = (tr and tr(key)) or key
+        if select("#", ...) > 0 then return string.format(text, ...) end
+        return text
+    end
+    local function copyList(t)
+        local o = {}
+        for i = 1, #t do o[i] = t[i] end
+        return o
+    end
     local selected = opts.Default or options[1] or ""
+    if multi then selected = nil end
+    local selMap = {}                  -- 多选：value -> true
+    local selList = {}                 -- 多选：当前已选（按选项顺序）
+    if multi then
+        -- Default 支持数组或 "A,B" 串
+        local def = opts.Default
+        if type(def) == "table" then
+            for _, v in ipairs(def) do selMap[tostring(v)] = true end
+        elseif type(def) == "string" and def ~= "" then
+            for part in def:gmatch("[^,]+") do
+                local p = part:gsub("^%s+", ""):gsub("%s+$", "")
+                if p ~= "" then selMap[p] = true end
+            end
+        end
+    end
     local cb = opts.Callback
     local obj
     local closeMenu, refreshHighlights
@@ -934,15 +972,48 @@ local function makeDropdown(parent, opts)
     menuStroke.Transparency = 0.45
     menuStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 
+    -- 多选：按选项顺序返回已选项，保证 Value 顺序稳定（不受点击先后影响）
+    local function selectedOrdered(list)
+        local out = {}
+        for _, v in ipairs(list or options) do
+            local sv = tostring(v)
+            if selMap[sv] then out[#out + 1] = sv end
+        end
+        return out
+    end
+    -- 胶囊文案：≤3 项全列，超出折叠为「A, B, C 等 N 项」
+    local function formatLabel()
+        if not multi then return tostring(selected) end
+        local list = selectedOrdered()
+        if #list == 0 then return T("None") end
+        if #list <= 3 then return table.concat(list, ", ") end
+        return table.concat({ list[1], list[2], list[3] }, ", ")
+            .. " " .. T("and %d more", #list - 3)
+    end
+
     local function buildOptions(list)
         for _, o in ipairs(optionButtons) do
             if o.btn and o.btn.Parent then o.btn:Destroy() end
         end
         optionButtons = {}
-        local valid = false
-        for _, v in ipairs(list) do if v == selected then valid = true break end end
-        if not valid then selected = list[1] or "" end
-        capLabel.Text = tostring(selected)
+        if multi then
+            -- 丢弃已不在候选列表里的选中项，再重建 map
+            local valid = {}
+            for _, v in ipairs(list) do valid[tostring(v)] = true end
+            local keep = {}
+            for _, v in ipairs(selectedOrdered(list)) do
+                if valid[v] then keep[#keep + 1] = v end
+            end
+            selMap = {}
+            for _, v in ipairs(keep) do selMap[v] = true end
+            selList = keep
+            capLabel.Text = formatLabel()
+        else
+            local valid = false
+            for _, v in ipairs(list) do if v == selected then valid = true break end end
+            if not valid then selected = list[1] or "" end
+            capLabel.Text = tostring(selected)
+        end
         for i, name in ipairs(list) do
             local txt = tostring(name)
             local ob = Instance.new("TextButton", menu)
@@ -969,25 +1040,87 @@ local function makeDropdown(parent, opts)
             tx.Text = txt
             tx.ZIndex = z + 12
             tx:SetAttribute("_skipFade", true)
-            ob.MouseButton1Click:Connect(function()
-                if txt == selected then return end
-                selected = txt
-                capLabel.Text = txt
-                refreshHighlights()
-                closeMenu()
-                if cb then pcall(cb, txt) end
-                if obj and obj._configValue then obj._configCurrent = txt; syncConfigValue(obj) end
-            end)
-            optionButtons[i] = { btn = ob, tx = tx, name = txt }
+            local ck = nil
+            if multi then
+                -- 多选：左侧文字 + 右侧对勾；点选不收起菜单，便于连续勾选
+                tx.Size = UDim2.new(1, -s(30), 1, 0)
+                tx.Position = UDim2.fromOffset(s(10), 0)
+                tx.TextXAlignment = Enum.TextXAlignment.Left
+                ck = Instance.new("ImageLabel", ob)
+                ck.Name = "DdCheck"
+                ck.Size = UDim2.fromOffset(s(12), s(12))
+                ck.AnchorPoint = Vector2.new(1, 0.5)
+                ck.Position = UDim2.new(1, -s(8), 0.5, 0)
+                ck.BackgroundTransparency = 1
+                ck.Active = false
+                ck.ZIndex = z + 12
+                ck:SetAttribute("_skipFade", true)
+                applyIcon(ck, "check", Style.ActiveText)
+                ob.MouseButton1Click:Connect(function()
+                    if selMap[txt] then selMap[txt] = nil else selMap[txt] = true end
+                    selList = selectedOrdered()
+                    local out = copyList(selList)
+                    capLabel.Text = formatLabel()
+                    refreshHighlights()
+                    if obj then
+                        obj.Value = copyList(out)
+                        if obj._configValue then obj._configCurrent = copyList(out); syncConfigValue(obj) end
+                    end
+                    if cb then pcall(cb, out) end
+                end)
+            else
+                ob.MouseButton1Click:Connect(function()
+                    if txt == selected then return end
+                    selected = txt
+                    capLabel.Text = txt
+                    refreshHighlights()
+                    closeMenu()
+                    if cb then pcall(cb, txt) end
+                    if obj and obj._configValue then obj._configCurrent = txt; syncConfigValue(obj) end
+                end)
+            end
+            optionButtons[i] = { btn = ob, tx = tx, name = txt, check = ck }
         end
         refreshHighlights()
         if obj then
-            obj.Value = selected
-            if obj._configValue then obj._configCurrent = selected; syncConfigValue(obj) end
+            if multi then
+                local out = copyList(selectedOrdered())
+                obj.Value = out
+                if obj._configValue then obj._configCurrent = copyList(out); syncConfigValue(obj) end
+            else
+                obj.Value = selected
+                if obj._configValue then obj._configCurrent = selected; syncConfigValue(obj) end
+            end
         end
     end
 
     refreshHighlights = function()
+        if multi then
+            -- 多选：全部选项常驻显示，选中项银白底 + 深色文字 + 右侧对勾
+            for i, o in ipairs(optionButtons) do
+                local isSel = selMap[o.name] == true
+                o.btn.Visible = true
+                o.tx.Visible = true
+                o.btn.Position = UDim2.fromOffset(s(4), s(4) + (i - 1) * optH)
+                if isSel then
+                    o.btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+                    o.btn.BackgroundTransparency = 0.86
+                    o.tx.TextColor3 = Color3.fromRGB(18, 18, 22)
+                else
+                    o.btn.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+                    o.btn.BackgroundTransparency = 1
+                    o.tx.TextColor3 = Color3.fromRGB(230, 230, 235)
+                end
+                if o.check then
+                    o.check.Visible = isSel
+                    o.check.ImageColor3 = isSel
+                        and Color3.fromRGB(18, 18, 22)
+                        or Color3.fromRGB(230, 230, 235)
+                end
+            end
+            menu.Size = UDim2.fromOffset(capW, math.max(1, #optionButtons) * optH + s(8))
+            return
+        end
         local vis = 0
         for _, o in ipairs(optionButtons) do
             local isSel = (o.name == selected)
@@ -1040,8 +1173,34 @@ local function makeDropdown(parent, opts)
         end)
     end)
 
-    obj = { Value = selected }
+    obj = { Value = multi and {} or selected }
     function obj:Set(v)
+        if multi then
+            -- 接受 table 数组，或 "A,B" 逗号串（兼容旧配置/手写）
+            local incoming = {}
+            if type(v) == "table" then
+                for _, x in ipairs(v) do incoming[#incoming + 1] = tostring(x) end
+            elseif type(v) == "string" and v ~= "" then
+                for part in v:gmatch("[^,]+") do
+                    local p = part:gsub("^%s+", ""):gsub("%s+$", "")
+                    if p ~= "" then incoming[#incoming + 1] = p end
+                end
+            end
+            local valid = {}
+            for _, o in ipairs(options) do valid[tostring(o)] = true end
+            selMap = {}
+            for _, x in ipairs(incoming) do
+                if valid[x] then selMap[x] = true end
+            end
+            selList = selectedOrdered()
+            local out = copyList(selList)
+            obj.Value = out
+            capLabel.Text = formatLabel()
+            refreshHighlights()
+            if obj._configValue then obj._configCurrent = copyList(out); syncConfigValue(obj) end
+            if cb then pcall(cb, copyList(out)) end
+            return
+        end
         selected = (v ~= nil) and tostring(v) or ""
         capLabel.Text = selected
         obj.Value = selected
@@ -1049,7 +1208,45 @@ local function makeDropdown(parent, opts)
         if obj._configValue then obj._configCurrent = selected; syncConfigValue(obj) end
         if cb then pcall(cb, selected) end
     end
-    function obj:Get() return selected end
+    function obj:Get()
+        if multi then return copyList(selectedOrdered()) end
+        return selected
+    end
+    -- 多选便捷方法
+    function obj:IsSelected(name)
+        if not multi then return tostring(name) == selected end
+        return selMap[tostring(name)] == true
+    end
+    function obj:Select(name, on)
+        if not multi then return end
+        local txt = tostring(name)
+        local exists = false
+        for _, v in ipairs(options) do if tostring(v) == txt then exists = true break end end
+        if not exists then return end
+        if on == nil then on = not selMap[txt] end
+        selMap[txt] = on and true or nil
+        selList = selectedOrdered()
+        local out = copyList(selList)
+        obj.Value = out
+        capLabel.Text = formatLabel()
+        refreshHighlights()
+        if obj._configValue then obj._configCurrent = copyList(out); syncConfigValue(obj) end
+        if cb then pcall(cb, copyList(out)) end
+    end
+    function obj:ClearSelection()
+        if not multi then return end
+        selMap = {}
+        selList = {}
+        obj.Value = {}
+        capLabel.Text = formatLabel()
+        refreshHighlights()
+        if obj._configValue then obj._configCurrent = {}; syncConfigValue(obj) end
+        if cb then pcall(cb, {}) end
+    end
+    -- 供语言切换后重算胶囊文案（"等 N 项" / "无" 需要随语言变化）
+    function obj:RefreshLabel()
+        capLabel.Text = formatLabel()
+    end
     function obj:GetOptions()
         local list = {}
         for _, v in ipairs(options) do list[#list + 1] = v end
@@ -1085,6 +1282,8 @@ local function makeDropdown(parent, opts)
     end
     obj.SetValue = obj.Set
     obj._closeMenu = closeMenu
+    obj.Multi = multi
+    obj._multi = multi
     obj.Options = options
     buildOptions(options)
     return obj
@@ -2740,7 +2939,18 @@ addDetailRow = function(win, ctrl, kind, opts)
         return decorate(obj)
     elseif kind == "Dropdown" then
         local options = opts.Options or {}
-        local def = opts.Default or options[1] or ""
+        local multi = opts.Multi == true
+        local def
+        if multi then
+            if type(opts.Default) == "table" then
+                def = {}
+                for _, v in ipairs(opts.Default) do def[#def + 1] = tostring(v) end
+            else
+                def = {}
+            end
+        else
+            def = opts.Default or options[1] or ""
+        end
         local obj
         obj = makeDropdown(row, {
             Width = s(150),
@@ -2748,6 +2958,8 @@ addDetailRow = function(win, ctrl, kind, opts)
             Position = UDim2.new(1, -s(150) - s(10), 0.5, -s(12)),
             Options = options,
             Default = def,
+            Multi = multi,
+            Translate = function(k) return translateKey(win, k) end,
             ZIndex = ZBASE + 8,
             Callback = function(v)
                 if obj then obj.Value = v end
@@ -2762,6 +2974,10 @@ addDetailRow = function(win, ctrl, kind, opts)
             obj._configValue = makeConfigValue(win, opts.ConfigKey, "Dropdown")
             obj._configCurrent = def
             syncConfigValue(obj)
+        end
+        if multi then
+            -- 胶囊文案里的「等 N 项 / 无」需随语言切换重算
+            i18nDynamic(win, function() obj:RefreshLabel() end)
         end
         return decorate(obj)
     end
