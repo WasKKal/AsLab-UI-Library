@@ -4746,7 +4746,7 @@ function Library.CreateWindow(opts)
         cfgOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
         cfgOverlay.BackgroundTransparency = 0.55
         cfgOverlay.BorderSizePixel = 0
-        cfgOverlay.ZIndex = SET_Z
+        cfgOverlay.ZIndex = ZBASE + 51   -- 必须低于 cfgPanel(ZBASE+52)，否则整块面板被蒙版盖住、按钮收不到点击(Sibling 模式下兄弟 Z 决定整棵子树层级)
         cfgOverlay.Visible = false
         cfgOverlay.ClipsDescendants = false
         cfgOverlay.Active = true
@@ -4792,6 +4792,7 @@ function Library.CreateWindow(opts)
         })
         cfgPanel.ZIndex = ZBASE + 52
         cfgPanel.ClipsDescendants = false
+        cfgPanel.Active = true   -- 捕获面板内部空白点击，避免穿透到蒙版误关闭；蒙版自身负责"点外部关闭"
         cfgPanel.Visible = false
 
         local cfgTitle = Instance.new("TextLabel", cfgPanel)
@@ -4881,6 +4882,7 @@ function Library.CreateWindow(opts)
         ddArrow.ZIndex = SET_Z + 5
         ddArrow:SetAttribute("_skipFade", true)
         applyIcon(ddArrow, "chevron-down", Style.SubText)
+        attachClickFx(ddCapsule, { tint = Style.SubText, peak = 0.5, radius = UDim.new(0, s(10)) })
 
         local ddMenu = Instance.new("Frame", cfgPanel)
         ddMenu.Name = "ConfigMenu"
@@ -5105,6 +5107,7 @@ function Library.CreateWindow(opts)
         end)
 
         cfgX.MouseButton1Click:Connect(closeConfig)
+        cfgOverlay.MouseButton1Click:Connect(closeConfig)   -- 点蒙版空白处关闭面板(蒙版在面板之下、主窗口之上)
 
         do
             local function markSkip(node)
