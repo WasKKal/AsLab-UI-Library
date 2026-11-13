@@ -127,6 +127,9 @@ local SIDEBAR_W    = s(Cfg.TabWidth)
 local TAB_AREA_GAP = s(Cfg.TabAreaGap)
 local HEADER_H     = s(58)
 local HEADER_PAD   = s(16)
+-- 标题/Info 超线时，竖分隔线顶部下移到标题栏下方的量（避开超长文字）；
+-- 竖线底部同时向下延长，与 FooterSeparator 一起闭合关闭按钮区域。
+local SEP_TOP_SHRINK = HEADER_H + s(2)
 local PAD          = s(10)
 local GAP          = s(10)
 local H_GAP        = s(11.2)
@@ -203,6 +206,36 @@ local function i18nDynamic(win, fn)
     if not (win and fn) then return end
     win._i18nDynamic = win._i18nDynamic or {}
     table.insert(win._i18nDynamic, fn)
+end
+
+-- 把某个已注册 i18n 对象的翻译 key 改成新标题（SetTitle 用），
+-- 避免语言切换时 applyLang 用旧 key 把标题覆盖回去。
+local function retargetI18n(win, obj, key)
+    if not (win and obj) then return end
+    for _, e in ipairs(win._i18n or {}) do
+        if e.obj == obj then e.key = key end
+    end
+end
+
+--[[
+    输入盾：拖动窗口 / Shortcut / 悬浮球，以及设置页打开期间，屏蔽触摸穿透到 3D 视角。
+    Roblox 中 Touch 拖动 GUI 时，若命中区不是 Active 输入，触摸会穿透到 Camera 导致
+    屏幕视角移动。这里用「全屏 Active 透明层 + UserInputService.ModalEnabled」双重阻断：
+      · 全屏层 ZIndex 低于所有交互层，只吃掉空白区触摸，不遮挡面板按钮 / 滑块；
+      · ModalEnabled 阻止输入作用于 3D 世界（相机 / 角色），但不影响 GUI 事件，
+        也不吞掉拖动所依赖的 InputChanged / InputEnded，拖动本身不受影响。
+    用 key 集合管理多来源，幂等且互不干扰（窗口 / 悬浮球 / Shortcut / 设置页可叠加）。
+]]
+local function setInputSink(win, key, on)
+    if not win then return end
+    win._sinks = win._sinks or {}
+    local before = next(win._sinks) ~= nil
+    if on then win._sinks[key] = true else win._sinks[key] = nil end
+    local after = next(win._sinks) ~= nil
+    if before == after then return end
+    win._inputSinkActive = after
+    if win._inputShield then win._inputShield.Visible = after end
+    pcall(function() UserInputService.ModalEnabled = after end)
 end
 
 local function applyLang(win)
@@ -1140,7 +1173,7 @@ local function updateCanvas(win)
                     if b > customBottom then customBottom = b end
                 end
             end
-            t._customLayer.Size = UDim2.new(1, 0, 0, customBottom)
+            t._customLayer.Size = UDim2.fromOffset(areaW, customBottom)
         end
         local total = bottom + (t._customLayer and (GAP + customBottom) or 0)
         local h = PAD_IN * 2 + total + PAD_IN
@@ -1721,6 +1754,7 @@ createShortcut = function(win, ctrl)
     local function stopDrag(fire)
         if not dragging then return end
         dragging = false
+        setInputSink(win, "shortcut", false)
         if moveConn then pcall(function() moveConn:Disconnect() end) moveConn = nil end
         if endConn then pcall(function() endConn:Disconnect() end) endConn = nil end
         cancelPressTweens()
@@ -1747,6 +1781,7 @@ createShortcut = function(win, ctrl)
     hit.MouseButton1Down:Connect(function()
         if dragging then stopDrag(false) end
         dragging = true
+        setInputSink(win, "shortcut", true)
         moved = false
         haveStart = false
         startX, startY = inputPoint(dragStartInput)
@@ -1837,6 +1872,7 @@ buildDetail = function(win, ctrl)
     end
     i18nDynamic(win, refreshDetailTitle)
     refreshDetailTitle()
+    ctrl._refreshDetailTitle = refreshDetailTitle
 
     local back = Instance.new("TextButton", layer)
     back.Name = "Back"
@@ -1942,7 +1978,7 @@ addDetailRow = function(win, ctrl, kind, opts)
     ctrl._detailBottom = y + ROW_H
     updateCanvas(win)
     if kind == "Paragraph" then
-        -- 段落控件：照抄 DynamicCow 的 SubParagraph（标题 + 说明 + 可选图标，高度随文字变化）
+        -- 段落控件：标题 + 说明 + 可选图标，高度随文字变化
         local paraW = (win._controlW or win._sizeX) - PAD_IN * 2 - s(4)
         local title = opts.Title or ""
         local info = opts.Info or ""
@@ -2132,6 +2168,21 @@ addDetailRow = function(win, ctrl, kind, opts)
     local row, rowLabel = makeRow(layer, y, opts.Title or kind)
     i18nText(win, rowLabel, opts.Title or kind)
 
+    -- 通用标题 API：所有子选项都能在运行时改 Title；同步 rowLabel 文本与 i18n key，
+    -- 避免语言切换时 applyLang 用旧 key 把标题覆盖回去。
+    opts.Title = opts.Title or kind
+    local function decorate(obj)
+        function obj:SetTitle(t)
+            t = tostring(t or "")
+            opts.Title = t
+            retargetI18n(win, rowLabel, t)
+            rowLabel.Text = translateKey(win, t)
+            return obj
+        end
+        function obj:GetTitle() return tostring(opts.Title or "") end
+        return obj
+    end
+
     if kind == "Slider" then
         local minV = opts.Min or 0
         local maxV = opts.Max or 100
@@ -2275,7 +2326,7 @@ addDetailRow = function(win, ctrl, kind, opts)
             obj._configCurrent = def
             syncConfigValue(obj)
         end
-        return obj
+        return decorate(obj)
     elseif kind == "Toggle" then
         local box, label, hit = makeBox(row, s(52), "OFF")
         local silver = Instance.new("Frame", box)
@@ -2326,7 +2377,7 @@ addDetailRow = function(win, ctrl, kind, opts)
             obj._configCurrent = st
             syncConfigValue(obj)
         end
-        return obj
+        return decorate(obj)
     elseif kind == "Button" then
         local box, blabel, hit = makeBox(row, s(90), opts.Text or "Run")
         i18nText(win, blabel, opts.Text or "Run")
@@ -2359,7 +2410,7 @@ addDetailRow = function(win, ctrl, kind, opts)
             syncConfigValue(obj)
             function obj:Set() if opts.Callback then pcall(opts.Callback) end end
         end
-        return obj
+        return decorate(obj)
     elseif kind == "ColorPicker" then
         local box, label, hit = makeBox(row, s(110), "")
         local swatch = Instance.new("Frame", box)
@@ -2605,7 +2656,7 @@ addDetailRow = function(win, ctrl, kind, opts)
             obj._configCurrent = def
             syncConfigValue(obj)
         end
-        return obj
+        return decorate(obj)
     elseif kind == "Dropdown" then
         local options = opts.Options or {}
         local def = opts.Default or options[1] or ""
@@ -2631,7 +2682,7 @@ addDetailRow = function(win, ctrl, kind, opts)
             obj._configCurrent = def
             syncConfigValue(obj)
         end
-        return obj
+        return decorate(obj)
     end
     return {}
 end
@@ -2912,6 +2963,27 @@ local function addControl(tab, kind, opts)
     function ctrl:AddColorPicker(o) return own(addDetailRow(tab._win, ctrl, "ColorPicker", o)) end
     function ctrl:AddDropdown(o) return own(addDetailRow(tab._win, ctrl, "Dropdown", o)) end
     function ctrl:AddParagraph(o) return own(addDetailRow(tab._win, ctrl, "Paragraph", o)) end
+
+    -- 运行时改变主控件 Title：同步方块标题、i18n key、详情页标题与 Shortcut 名称。
+    function ctrl:SetTitle(newTitle)
+        newTitle = tostring(newTitle or "")
+        opts.Title = newTitle
+        if ctrl._title and ctrl._title.Parent then
+            retargetI18n(cwin, ctrl._title, newTitle)
+            ctrl._title.Text = translateKey(cwin, newTitle)
+        end
+        if ctrl._refreshDetailTitle then pcall(ctrl._refreshDetailTitle) end
+        local sc = ctrl._shortcut
+        if sc and sc.label then
+            sc.label.Text = newTitle
+            pcall(function()
+                local sz = TextService:GetTextSize(newTitle, s(12), Style.Font, Vector2.new(10000, 100))
+                sc.frame.Size = UDim2.fromOffset(math.max(s(80), sz.X + s(28)), sc.frame.Size.Y.Offset)
+            end)
+        end
+        return ctrl
+    end
+    function ctrl:GetTitle() return tostring(opts.Title or "") end
 
     table.insert(tab._controls, ctrl)
     noteTree(block)
@@ -3735,6 +3807,19 @@ function Library.CreateWindow(opts)
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.DisplayOrder = 100000
 
+    -- 输入盾：全屏 Active 透明层。拖动窗口 / 悬浮球 / Shortcut 或设置页打开时显示，
+    -- 吃掉落在空白区域的触摸，避免穿透到 3D 相机导致视角移动。
+    -- ZIndex 低于 Main 及所有交互层，故不遮挡面板按钮 / 滑块。
+    local inputShield = Instance.new("Frame", gui)
+    inputShield.Name = "InputShield"
+    inputShield.Size = UDim2.fromScale(1, 1)
+    inputShield.Position = UDim2.fromOffset(0, 0)
+    inputShield.BackgroundTransparency = 1
+    inputShield.BorderSizePixel = 0
+    inputShield.Active = true
+    inputShield.Visible = false
+    inputShield.ZIndex = ZBASE - 1
+
     local vw0, vh0 = viewport()
     local initW = Size.X.Offset + (Size.X.Scale or 0) * vw0
     local initH = Size.Y.Offset + (Size.Y.Scale or 0) * vh0
@@ -3810,7 +3895,8 @@ function Library.CreateWindow(opts)
     local titleIcon = Instance.new("ImageLabel", header)
     titleIcon.Name = "TitleIcon"
     titleIcon.Size = UDim2.fromOffset(iconSize, iconSize)
-    titleIcon.Position = UDim2.new(0, HEADER_PAD, 0.5, -iconSize / 2)
+    -- 标题图标上移 2px，与两行标题视觉重心对齐
+    titleIcon.Position = UDim2.new(0, HEADER_PAD, 0.5, -iconSize / 2 - 2)
     titleIcon.BackgroundTransparency = 1
     applyIcon(titleIcon, TitleIcon)
 
@@ -3851,15 +3937,18 @@ function Library.CreateWindow(opts)
 
     local sep = Instance.new("Frame", main)
     sep.Name = "TabSeparator"
-    sep.Size = UDim2.new(0, 1, 1, -FOOTER_H - PAD)
+    -- 底部向下延长至关闭按钮区域下方，与 FooterSeparator 一起闭合关闭按钮区；
+    -- 顶部由 refreshSeparator 依据标题/Info 是否超线动态缩短（未超线时闭合到窗口顶）。
+    sep.Size = UDim2.new(0, 1, 1, -PAD / 2)
     sep.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP / 2, 0, 0)
     sep.BackgroundColor3 = Cfg.DividerColor
     sep.BorderSizePixel = 0
 
     local controlRegion = Instance.new("Frame", main)
     controlRegion.Name = "ControlRegion"
-    controlRegion.Size = UDim2.new(1, -(PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN), 1, -(bodyY + s(8) + FOOTER_H + PAD))
-    controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, bodyY + s(8))
+    -- 功能控件放在功能区域顶部（去掉原有 8px 顶部间隙）
+    controlRegion.Size = UDim2.new(1, -(PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN), 1, -(bodyY + FOOTER_H + PAD))
+    controlRegion.Position = UDim2.new(0, PAD / 2 + SIDEBAR_W + TAB_AREA_GAP, 0, bodyY)
     controlRegion.BackgroundTransparency = 1
     controlRegion.BorderSizePixel = 0
     controlRegion.ClipsDescendants = false
@@ -4027,6 +4116,9 @@ function Library.CreateWindow(opts)
         _tabs = {},
         _activeTab = 0,
         _selected = nil,
+        _inputShield = inputShield,
+        _inputSinkActive = false,
+        _sinks = {},
         _sizeX = Size.X.Offset,
         _sizeY = Size.Y.Offset,
         _uiScale = 1,
@@ -4037,7 +4129,7 @@ function Library.CreateWindow(opts)
         _settingsScale = 1,
         _settingsLanguage = "English",
         _controlW = Size.X.Offset - (PAD / 2 + SIDEBAR_W + TAB_AREA_GAP + PAD_IN),
-        _viewH = Size.Y.Offset - (HEADER_H + s(8) + FOOTER_H + PAD),
+        _viewH = Size.Y.Offset - (HEADER_H + FOOTER_H + PAD),
         _shortcuts = {},
         _listening = nil,
         _detail = nil,
@@ -4078,6 +4170,40 @@ function Library.CreateWindow(opts)
     win:OnLanguageChanged(function() applyLang(win) end)
     if infoLabel then i18nText(win, infoLabel, InfoText) end
     applyLang(win)
+
+    --[[
+        分隔线自适应：
+        - 标题 / Info 文字「超线」（超出标题栏可用宽度）时，竖分隔线顶部向下缩短到
+          标题栏下方，避免竖线纵穿超长的标题文字；
+        - 未超线时竖线从窗口顶部起，保持与顶边「闭合」；
+        - 竖线底部始终向下延长至关闭按钮区域下方，与 FooterSeparator 一起闭合左下角。
+        语言切换会改变 Info 文案，需重算。
+    ]]
+    local sepX = PAD / 2 + SIDEBAR_W + TAB_AREA_GAP / 2
+    local function refreshSeparator()
+        if not (sep and sep.Parent) then return end
+        local titleLeft = HEADER_PAD + TITLE_ICON + s(10)
+        -- 「超线」= 标题/Info 文字右边缘越过竖分隔线所在的 x 位置
+        -- 允许文字略微越过竖线（留一点余量），避免短标题被误判；明显超长才触发缩短
+        local availW = math.max(40, sepX - titleLeft + s(8))
+        local function tooWide(txt, sz)
+            if type(txt) ~= "string" or txt == "" then return false end
+            -- 优先用引擎精确测量；不支持 / 报错时回退到字符数近似，保证判断不静默失效
+            local ok, m = pcall(function()
+                return TextService:GetTextSize(txt, sz, Style.Font, Vector2.new(100000, 100000))
+            end)
+            local w = (ok and m and m.X) or (#txt * sz * 0.58)
+            return w > availW
+        end
+        local overflow = tooWide(titleLabel.Text, s(18)) or tooWide(infoLabel.Text, s(12))
+        win._sepOverflow = overflow
+        local top = overflow and SEP_TOP_SHRINK or 0
+        sep.Position = UDim2.new(0, sepX, 0, top)
+        sep.Size = UDim2.new(0, 1, 1, -PAD / 2 - top)
+    end
+    win._refreshSeparator = refreshSeparator
+    win:OnLanguageChanged(function() pcall(refreshSeparator) end)
+    refreshSeparator()
 
     orbExt.Changed:Connect(function() applyOrbLayout(win) end)
     orbBlend.Changed:Connect(function() applyOrbLayout(win) end)
@@ -4352,6 +4478,7 @@ function Library.CreateWindow(opts)
     local settingsGen = 0
     local function closeSettings(instant)
         win._settingsOpen = false
+        setInputSink(win, "settings", false)
         settingsGen = settingsGen + 1
         local gen = settingsGen
         if langDropdown and langDropdown._closeMenu then pcall(langDropdown._closeMenu) end
@@ -4377,6 +4504,7 @@ function Library.CreateWindow(opts)
     local function openSettings()
         if win._settingsOpen then return end
         win._settingsOpen = true
+        setInputSink(win, "settings", true)
         settingsGen = settingsGen + 1
         previewScale = win._uiScale or 1
         settingsLanguage = win._language or "English"
@@ -4571,6 +4699,7 @@ function Library.CreateWindow(opts)
     local function stopWinDrag()
         if not winDrag then return end
         winDrag = false
+        setInputSink(win, "window", false)
         if winMoveConn then pcall(function() winMoveConn:Disconnect() end) winMoveConn = nil end
         if winEndConn then pcall(function() winEndConn:Disconnect() end) winEndConn = nil end
     end
@@ -4580,6 +4709,7 @@ function Library.CreateWindow(opts)
         if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then return end
         if winDrag then stopWinDrag() end
         winDrag = true
+        setInputSink(win, "window", true)
         winMoved = false
         wsx, wsy = inputPoint(input)
         wox, woy = win._main.Position.X.Offset, win._main.Position.Y.Offset
@@ -4610,6 +4740,7 @@ function Library.CreateWindow(opts)
     local function stopOrbDrag()
         if not orbDragging then return end
         orbDragging = false
+        setInputSink(win, "orb", false)
         win._orbDragging = false
         if orbMoveConn then pcall(function() orbMoveConn:Disconnect() end) orbMoveConn = nil end
         if orbEndConn then pcall(function() orbEndConn:Disconnect() end) orbEndConn = nil end
@@ -4617,6 +4748,7 @@ function Library.CreateWindow(opts)
     local function startOrbDrag(input)
         if orbDragging then return end
         orbDragging = true
+        setInputSink(win, "orb", true)
         win._orbDragging = true
         orbGestureMoved = false
         orbSuppressClick = false
@@ -5074,7 +5206,8 @@ function Library:AddCustomTab(name, icon)
 
     local layer = Instance.new("Frame", tab._container)
     layer.Name = "CustomLayer"
-    layer.Size = UDim2.new(1, 0, 0, 0)
+    local customW = (self._controlW or self._sizeX) - PAD_IN * 2
+    layer.Size = UDim2.fromOffset(customW, 0)
     layer.Position = UDim2.fromOffset(0, 0)
     layer.BackgroundTransparency = 1
     layer.BorderSizePixel = 0
@@ -5082,6 +5215,7 @@ function Library:AddCustomTab(name, icon)
     setGroupTransparency(layer, 0)
     tab._customLayer = layer
     tab.Container = layer
+    tab.ContainerWidth = customW
 
     function tab:Refresh()
         updateCanvas(self._win)
