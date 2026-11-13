@@ -18,6 +18,7 @@
 - 🪟 **多窗口管理**：支持多实例共存、休眠态切换，重复加载时自动重建避免叠加。
 - 🔌 **零依赖注入**：单文件引入即可使用，兼容主流 Roblox 执行环境。
 - 🎨 **可主题化**：内置样式系统，方便统一换肤或自定义品牌色。
+- 🧱 **混合布局**：`Notice` 展示块支持 1~3 格横向跨列 / 竖向不限行；`AddCustomTab` 允许在滑动选项卡内自由创建任意自定义 UI。
 
 ## 📦 安装
 
@@ -60,8 +61,10 @@ Vol:SetValue(80)  -- 运行时动态改变滑块值（自动 clamp 到 0~100）
 | 方法 | 说明 |
 | --- | --- |
 | `Win:AddTab(name, icon)` | 添加标签页 |
+| `Win:AddCustomTab(name, icon)` | 添加「自定义选项卡」——同样是选项卡 + 滑动容器，但可自由创建任意 UI（见下文） |
 | `Tab:AddToggle(opts)` | 主开关（可长按进入详情页） |
 | `Tab:AddButton(opts)` | 主按钮 |
+| `Tab:AddNotice(opts)` | 展示型 Notice：外观与主控件一致，但**不可点击**、仅显示信息（见下文） |
 
 **子选项（长按主开关进入详情页后添加，挂在某个 `Ctrl` 上）**
 
@@ -95,6 +98,62 @@ P:SetBackColor(Color3.fromRGB(34, 34, 42))
 P:GetTitle()  -- 读回标题
 P:GetInfo()   -- 读回说明
 ```
+
+### 🔔 展示控件 `Tab:AddNotice`
+
+外观与**普通主控件一致**（玻璃质感 + 描边），但**不可点击、不进详情页**，仅作信息展示。左上角大标题 + 下方正文，文字不做自适应长度（固定字号、自动换行）。
+
+```lua
+local N = Tab:AddNotice({
+    Title = "AsLab UI 特点",                    -- 左上角大标题
+    Text  = "轻量玻璃拟态 · 无头可测 · 多配置槽 …", -- 正文（自动换行）
+    Icon  = "info",                             -- 可选：标题前的 Lucide 图标
+    Span  = 3,                                  -- 占格数（见下表）
+    Orientation = "Horizontal",                 -- "Horizontal" | "Vertical"
+    TitleColor = Color3.new(1, 1, 1),           -- 可选配色
+    TextColor  = Color3.fromRGB(180, 185, 205),
+    IconColor  = Color3.fromRGB(120, 170, 255),
+    BackColor  = Color3.fromRGB(26, 28, 36),
+})
+N:SetTitle("新标题")
+N:SetText("替换后的正文")
+N:SetIcon("alert-triangle")
+N:SetColors({ TitleColor = Color3.new(1, 1, 1), TextColor = Color3.new(.8, .8, .8) })
+```
+
+**占格规则**（底层为跨格感知的网格排布，Notice 与普通主控件可混排，自动按行打包换行）：
+
+| Orientation | Span 含义 | 限制 |
+| --- | --- | --- |
+| `Horizontal`（默认） | 横向所占**列数** | **1~3**（一行最多 3 格），超出自动 clamp |
+| `Vertical` | 竖向所占**行数** | ≥1，**不限制**行数 |
+
+### 🧱 自定义选项卡 `Win:AddCustomTab`
+
+与普通 `AddTab` 一样是**选项卡 + 滑动容器**，同样支持 `AddToggle` / `AddButton` / `AddNotice` 等库内控件；区别是额外暴露一个**自定义层**，可用原生 Roblox API 在里面创建任意 UI：
+
+```lua
+local Tab = Win:AddCustomTab("Custom", "layout-customize")
+
+-- 1) 库内控件照常添加
+Tab:AddNotice({ Title = "说明", Text = "…", Span = 3 })
+
+-- 2) 任意自定义 UI：父到 Tab.Container，用绝对坐标摆放
+local panel = Instance.new("Frame", Tab.Container)
+panel.Size = UDim2.fromOffset(240, 140)
+panel.Position = UDim2.fromOffset(0, 0)
+-- …继续添加 UICorner / TextLabel / 按钮等
+
+-- 3) 父入自定义 UI 后刷新，让滚动画布按内容自动撑高
+Tab:Refresh()
+```
+
+| 成员 | 说明 |
+| --- | --- |
+| `Tab.Container` | 网格下方的自定义层（`Frame`），把自建 UI 以绝对坐标父于此 |
+| `Tab:Refresh()` | 重新计算滚动画布高度；自定义层自动定位到网格下方，并按子控件底边撑高 |
+
+> 完整示例见 `AsLab_Example.lua` 第 11 节：顶部跨 3 格 Notice + 左右双栏（Time/FPS/Network、玩家/LocalPlayer/角色状态）+ 自定义按钮与进度条。
 
 ## 💾 配置（多配置槽）
 
