@@ -3,7 +3,8 @@
     ------------------------------------------------------------
     覆盖内容：
       Library.PreloadLucide / GetHolderSource / CreateWindow
-      Win:AddTab / ShowNotify / SetLanguage / GetLanguage / OnLanguageChanged
+      Win:AddTab / ShowNotify / SetLanguage / GetLanguage / OnLanguageChanged / Translate
+      全文案 i18n：控件标题、Tab 名、窗口标题/Info、通知、ShortCut 文本均随语言切换
       多配置：SaveConfig(name) / LoadConfig(name) / GetConfigs / GetConfigName / GetConfigPath
               SetConfig / RenameConfig / DeleteConfig / ConfigExists
       Tab:AddToggle / AddButton
@@ -88,6 +89,60 @@ local Win = Library.CreateWindow({
             ["Dynamic"] = "动态",
             ["System"] = "系统",
             ["Notify"] = "通知",
+            -- 窗口标题 / Info / 自定义选项卡
+            ["TitleBar"] = "标题栏",
+            ["ImInfoBar"] = "信息栏",
+            ["Custom"] = "自定义",
+            -- 控件标题
+            ["Notes"] = "备注",
+            ["Update Note"] = "更新备注",
+            -- 通知固定文案
+            ["Paragraph"] = "段落",
+            ["Reloaded module list"] = "已重新加载模块列表",
+            ["Accent applied to 12 controls"] = "强调色已应用到 12 个控件",
+            ["Locked on"] = "已锁定",
+            ["AddOption"] = "添加选项",
+            ["RemoveOption"] = "移除选项",
+            ["Keep at least one option"] = "至少保留一个选项",
+            ["Reset"] = "重置",
+            ["All controls restored to defaults"] = "所有控件已恢复默认",
+            ["Loaded"] = "已加载",
+            ["Not found:"] = "未找到:",
+            ["Saved"] = "已保存",
+            ["Created"] = "已创建",
+            ["Renamed"] = "已重命名",
+            ["Rename failed"] = "重命名失败",
+            ["Deleted"] = "已删除",
+            ["Delete failed"] = "删除失败",
+            ["Configs"] = "配置列表",
+            ["Hello"] = "你好",
+            ["A short toast."] = "一条简短通知。",
+            ["First"] = "第一条",
+            ["Second"] = "第二条",
+            ["Third"] = "第三条",
+            ["Short one"] = "短通知",
+            ["A longer notification body that wraps after twenty five characters per line"] = "这是一条较长的通知正文，超过每行字符上限后会自动换行显示",
+            ["Another one"] = "再来一条",
+            ["Wrapped Title That Is Also Quite Long Indeed"] = "这个标题同样很长会自动换行",
+            ["The info line wraps automatically when it grows beyond twenty five characters, and the toast grows taller to fit."] = "信息行过长时会自动换行，通知框也会随之变高以容纳内容。",
+            ["Live #"] = "实时 #",
+            ["Minimize to see the orb capsule"] = "最小化后可看到悬浮球胶囊",
+            ["Key N"] = "按键 N",
+            ["Minimize the window and press N again"] = "最小化窗口后再按一次 N",
+            ["Switch to"] = "切换到",
+            -- 动态拼接文案里用到的词
+            ["added"] = "已添加",
+            ["removed"] = "已移除",
+            ["total"] = "共",
+            ["configs"] = "个配置",
+            ["back to"] = "返回",
+            -- 自定义选项卡里的英文标签
+            ["Time / FPS / Network"] = "时间 / 帧率 / 网络",
+            ["Server / LocalPlayer"] = "服务器 / 本地玩家",
+            ["Time:"] = "时间:",
+            ["FPS:"] = "帧率:",
+            ["Network:"] = "网络:",
+            ["FPS 进度:"] = "帧率进度:",
         },
     },
 })
@@ -273,7 +328,7 @@ local PlayerDropdown = TargetToggle:AddDropdown({
     Default = "None",
     Callback = function(v)
         if v ~= "None" then
-            Win:ShowNotify({ Title = "Target", Info = "Locked on " .. v, Time = 2 })
+            Win:ShowNotify({ Title = "Target", Info = Win:Translate("Locked on") .. " " .. v, Time = 2 })
         end
     end,
 })
@@ -317,7 +372,7 @@ local tagSeq = 2
 TabDynamic:AddButton({ Title = "Add Tag", Icon = "plus", Callback = function()
     tagSeq = tagSeq + 1
     TagDropdown:AddOption("tag-" .. tagSeq)
-    Win:ShowNotify({ Title = "AddOption", Info = "tag-" .. tagSeq .. " added · " .. #TagDropdown:GetOptions() .. " total", Time = 2 })
+    Win:ShowNotify({ Title = "AddOption", Info = "tag-" .. tagSeq .. " " .. Win:Translate("added") .. " · " .. Win:Translate("total") .. " " .. #TagDropdown:GetOptions(), Time = 2 })
 end })
 
 TabDynamic:AddButton({ Title = "Remove Tag", Icon = "minus", Callback = function()
@@ -328,7 +383,7 @@ TabDynamic:AddButton({ Title = "Remove Tag", Icon = "minus", Callback = function
     end
     local last = list[#list]
     TagDropdown:RemoveOption(last)
-    Win:ShowNotify({ Title = "RemoveOption", Info = last .. " removed", Time = 2 })
+    Win:ShowNotify({ Title = "RemoveOption", Info = last .. " " .. Win:Translate("removed"), Time = 2 })
 end })
 
 TabDynamic:AddButton({ Title = "Reset Tags", Icon = "rotate-ccw", Callback = function()
@@ -390,9 +445,9 @@ ConfigDrop = ConfigSlot:AddDropdown({
         if cfgSwitching or v == Win:GetConfigName() then return end
         -- LoadConfig(name)：从指定配置读取并写回所有带 ConfigKey 的控件
         if Win:LoadConfig(v) then
-            Win:ShowNotify({ Title = "Config", Info = "Loaded " .. v, Time = 2 })
+            Win:ShowNotify({ Title = "Config", Info = Win:Translate("Loaded") .. " " .. v, Time = 2 })
         else
-            Win:ShowNotify({ Title = "Config", Info = "Not found: " .. v, Time = 2 })
+            Win:ShowNotify({ Title = "Config", Info = Win:Translate("Not found:") .. " " .. v, Time = 2 })
         end
     end,
 })
@@ -429,7 +484,7 @@ TabConfig:AddButton({ Title = "New Config", Icon = "file-pen", Callback = functi
     name = name or ("Profile-" .. tostring(os.time()))
     Win:SaveConfig(name)                 -- 传 name 即「另存为」，并把它设为当前槽
     local all = syncConfigDrop(name)
-    Win:ShowNotify({ Title = "Created", Info = name .. " · " .. #all .. " configs", Time = 3 })
+    Win:ShowNotify({ Title = "Created", Info = name .. " · " .. #all .. " " .. Win:Translate("configs"), Time = 3 })
 end })
 
 -- 从默认配置读取并应用
@@ -460,7 +515,7 @@ TabConfig:AddButton({ Title = "Delete Config", Icon = "trash-2", Callback = func
     if Win:DeleteConfig(cur) then
         Win:LoadConfig(Win:GetConfigName())
         syncConfigDrop()
-        Win:ShowNotify({ Title = "Deleted", Info = cur .. " · back to " .. Win:GetConfigName(), Time = 3 })
+        Win:ShowNotify({ Title = "Deleted", Info = cur .. " · " .. Win:Translate("back to") .. " " .. Win:GetConfigName(), Time = 3 })
     else
         Win:ShowNotify({ Title = "Delete failed", Info = "Default 不能删除", Time = 2 })
     end
@@ -472,7 +527,7 @@ ConfigSlot:AddButton({ Title = "List Configs", Icon = "list", Callback = functio
     for i, n in ipairs(list) do
         print(string.format("[AsLab] config %d/%d: %s%s", i, #list, n, n == Win:GetConfigName() and "  <- active" or ""))
     end
-    Win:ShowNotify({ Title = "Configs (" .. #list .. ")", Info = table.concat(list, ", "), Time = 4 })
+    Win:ShowNotify({ Title = Win:Translate("Configs") .. " (" .. #list .. ")", Info = table.concat(list, ", "), Time = 4 })
 end })
 
 -- ============================================================
@@ -502,7 +557,7 @@ TabNotify:AddToggle({ Title = "Auto Notify (1s)", Icon = "bell", Default = false
     task.spawn(function()
         while autoNotifyOn and autoNotifyGen == gen do
             autoSeq = autoSeq + 1
-            Win:ShowNotify({ Title = "Live #" .. autoSeq, Info = "Minimize to see the orb capsule", Time = 2 })
+            Win:ShowNotify({ Title = Win:Translate("Live #") .. autoSeq, Info = "Minimize to see the orb capsule", Time = 2 })
             task.wait(1)
         end
     end)
@@ -513,8 +568,8 @@ local LangToggle = TabNotify:AddToggle({ Title = "Language", Icon = "globe", Def
 local LangButton   -- 前向声明：Callback 内需引用自身
 local function refreshLangTitles()
     local cur = Win:GetLanguage()
-    LangToggle:SetTitle("Language [" .. cur .. "]")
-    LangButton:SetTitle("Switch to " .. (cur == "English" and "中文" or "English"))
+    LangToggle:SetTitle(Win:Translate("Language") .. " [" .. cur .. "]")
+    LangButton:SetTitle(Win:Translate("Switch to") .. " " .. (cur == "English" and "中文" or "English"))
 end
 LangButton = LangToggle:AddButton({
     Title = "Switch to 中文",
@@ -555,7 +610,7 @@ local halfW = math.max(120, math.floor((areaW - uGap) / 2))
 local barH = 140
 
 -- 复刻库内玻璃观感的面板（库外代码也可自建 UI）
-local function glassPanel(parent, x, y, w, h, title)
+local function glassPanel(parent, x, y, w, h, titleKey)
     local f = Instance.new("Frame", parent)
     f.Name = "CustomPanel"
     f.Size = UDim2.fromOffset(w, h)
@@ -580,14 +635,14 @@ local function glassPanel(parent, x, y, w, h, title)
     t.Size = UDim2.fromOffset(w - 28, 22)
     t.Position = UDim2.fromOffset(14, 10)
     t.BackgroundTransparency = 1
-    t.Text = title or ""
+    t.Text = Win:Translate(titleKey or "")
     t.TextSize = 15
     t.TextColor3 = Color3.fromRGB(235, 238, 248)
     t.TextXAlignment = Enum.TextXAlignment.Left
     t.TextYAlignment = Enum.TextYAlignment.Top
     t.RichText = false
     t.TextWrapped = false
-    return f
+    return f, t
 end
 
 local function statLine(parent, x, y, w, text)
@@ -606,13 +661,13 @@ local function statLine(parent, x, y, w, text)
 end
 
 -- 左栏：Time / FPS / Network
-local leftBar = glassPanel(TabCustom.Container, 0, 0, halfW, barH, "Time / FPS / Network")
-local lTime = statLine(leftBar, 14, 42, halfW - 28, "Time:    --")
-local lFps = statLine(leftBar, 14, 66, halfW - 28, "FPS:     --")
-local lNet = statLine(leftBar, 14, 90, halfW - 28, "Network: --")
+local leftBar, leftTitle = glassPanel(TabCustom.Container, 0, 0, halfW, barH, "Time / FPS / Network")
+local lTime = statLine(leftBar, 14, 42, halfW - 28, Win:Translate("Time:") .. "    --")
+local lFps = statLine(leftBar, 14, 66, halfW - 28, Win:Translate("FPS:") .. "     --")
+local lNet = statLine(leftBar, 14, 90, halfW - 28, Win:Translate("Network:") .. " --")
 
 -- 右栏：在线玩家 / 本地玩家 / 角色状态
-local rightBar = glassPanel(TabCustom.Container, halfW + uGap, 0, halfW, barH, "Server / LocalPlayer")
+local rightBar, rightTitle = glassPanel(TabCustom.Container, halfW + uGap, 0, halfW, barH, "Server / LocalPlayer")
 local rPlayers = statLine(rightBar, 14, 42, halfW - 28, "在线玩家: --")
 local rName = statLine(rightBar, 14, 66, halfW - 28, "本地玩家: --")
 local rChar = statLine(rightBar, 14, 90, halfW - 28, "角色状态: --")
@@ -651,15 +706,15 @@ local function refreshStats()
     local ok, d = pcall(readStats)
     if not ok or not d then return end
     pcall(function()
-        lTime.Text = "Time:    " .. d.time
-        lFps.Text = "FPS:     " .. d.fps
-        lNet.Text = "Network: " .. d.net
+        lTime.Text = Win:Translate("Time:") .. "    " .. d.time
+        lFps.Text = Win:Translate("FPS:") .. "     " .. d.fps
+        lNet.Text = Win:Translate("Network:") .. " " .. d.net
         rPlayers.Text = "在线玩家: " .. d.players
         rName.Text = "本地玩家: " .. d.name
         rChar.Text = "角色状态: " .. d.char
         local fpsN = tonumber(d.fps) or 0
         progFill.Size = UDim2.new(math.clamp(fpsN / 120, 0, 1), 0, 1, 0)
-        progLabel.Text = "FPS 进度: " .. d.fps
+        progLabel.Text = Win:Translate("FPS 进度:") .. " " .. d.fps
     end)
 end
 
@@ -673,7 +728,7 @@ custBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 255)
 custBtn.BackgroundTransparency = 0.15
 custBtn.BorderSizePixel = 0
 custBtn.AutoButtonColor = false
-custBtn.Text = "点击切换 (Custom UI)"
+custBtn.Text = "点击切换 (自定义界面)"
 custBtn.TextSize = 14
 custBtn.TextColor3 = Color3.fromRGB(240, 244, 255)
 custBtn.RichText = false
@@ -683,7 +738,7 @@ local custOn = false
 custBtn.MouseButton1Click:Connect(function()
     custOn = not custOn
     custBtn.BackgroundColor3 = custOn and Color3.fromRGB(120, 200, 140) or Color3.fromRGB(70, 130, 255)
-    custBtn.Text = custOn and "已开启 (Custom UI)" or "点击切换 (Custom UI)"
+    custBtn.Text = custOn and "已开启 (自定义界面)" or "点击切换 (自定义界面)"
 end)
 
 local progTrack = Instance.new("Frame", TabCustom.Container)
@@ -704,7 +759,7 @@ pfCorner.CornerRadius = UDim.new(0, 8)
 progLabel = Instance.new("TextLabel", progTrack)
 progLabel.Size = UDim2.fromScale(1, 1)
 progLabel.BackgroundTransparency = 1
-progLabel.Text = "FPS 进度: --"
+progLabel.Text = Win:Translate("FPS 进度:") .. " --"
 progLabel.TextSize = 13
 progLabel.TextColor3 = Color3.fromRGB(235, 238, 248)
 progLabel.RichText = false
@@ -747,3 +802,12 @@ end
 syncConfigDrop()                          -- 让配置下拉与真实状态一致
 
 print("AsLab full example ready · language =", Win:GetLanguage(), "· config =", Win:GetConfigName())
+
+-- 语言切换：库内控件 / Tab / 窗口标题 / 通知 / ShortCut 已由库自动 i18n；
+-- 这里同步示例自己创建的自定义 UI 文案与语言按钮标题。
+Win:OnLanguageChanged(function()
+    pcall(refreshLangTitles)
+    if leftTitle and leftTitle.Parent then leftTitle.Text = Win:Translate("Time / FPS / Network") end
+    if rightTitle and rightTitle.Parent then rightTitle.Text = Win:Translate("Server / LocalPlayer") end
+    pcall(refreshStats)
+end)
