@@ -607,11 +607,12 @@ local areaW = TabCustom.ContainerWidth or TabCustom.Container.Size.X.Offset
 if not areaW or areaW <= 0 then areaW = (Win._controlW or 536) - 24 end
 local uGap = 12
 local halfW = math.max(120, math.floor((areaW - uGap) / 2))
-local barH = 140
+local barH = 150
 
 -- 复刻库内玻璃观感的面板（库外代码也可自建 UI）
 local function glassPanel(parent, x, y, w, h, titleKey)
-    local f = Instance.new("Frame", parent)
+    local f = Instance.new("Frame")
+    f.Parent = parent
     f.Name = "CustomPanel"
     f.Size = UDim2.fromOffset(w, h)
     f.Position = UDim2.fromOffset(x, y)
@@ -619,20 +620,23 @@ local function glassPanel(parent, x, y, w, h, titleKey)
     f.BackgroundTransparency = 0.62
     f.BorderSizePixel = 0
     f.ClipsDescendants = true
-    local corner = Instance.new("UICorner", f)
+    local corner = Instance.new("UICorner")
+    corner.Parent = f
     corner.CornerRadius = UDim.new(0, 16)
-    local grad = Instance.new("UIGradient", f)
+    local grad = Instance.new("UIGradient")
+    grad.Parent = f
     grad.Rotation = 90
     grad.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 43, 54)),
         ColorSequenceKeypoint.new(1, Color3.fromRGB(26, 28, 36)),
     })
-    local stroke = Instance.new("UIStroke", f)
+    local stroke = Instance.new("UIStroke")
+    stroke.Parent = f
     stroke.Color = Color3.fromRGB(80, 86, 110)
     stroke.Transparency = 0.55
     stroke.Thickness = 1
-    local t = Instance.new("TextLabel", f)
-    t.Size = UDim2.fromOffset(w - 28, 22)
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.fromOffset(w - 28, 40)
     t.Position = UDim2.fromOffset(14, 10)
     t.BackgroundTransparency = 1
     t.Text = Win:Translate(titleKey or "")
@@ -641,12 +645,13 @@ local function glassPanel(parent, x, y, w, h, titleKey)
     t.TextXAlignment = Enum.TextXAlignment.Left
     t.TextYAlignment = Enum.TextYAlignment.Top
     t.RichText = false
-    t.TextWrapped = false
+    t.TextWrapped = true
     return f, t
 end
 
 local function statLine(parent, x, y, w, text)
-    local t = Instance.new("TextLabel", parent)
+    local t = Instance.new("TextLabel")
+    t.Parent = parent
     t.Size = UDim2.fromOffset(w, 20)
     t.Position = UDim2.fromOffset(x, y)
     t.BackgroundTransparency = 1
@@ -662,15 +667,15 @@ end
 
 -- 左栏：Time / FPS / Network
 local leftBar, leftTitle = glassPanel(TabCustom.Container, 0, 0, halfW, barH, "Time / FPS / Network")
-local lTime = statLine(leftBar, 14, 42, halfW - 28, Win:Translate("Time:") .. "    --")
-local lFps = statLine(leftBar, 14, 66, halfW - 28, Win:Translate("FPS:") .. "     --")
-local lNet = statLine(leftBar, 14, 90, halfW - 28, Win:Translate("Network:") .. " --")
+local lTime = statLine(leftBar, 14, 58, halfW - 28, Win:Translate("Time:") .. "    --")
+local lFps = statLine(leftBar, 14, 82, halfW - 28, Win:Translate("FPS:") .. "     --")
+local lNet = statLine(leftBar, 14, 106, halfW - 28, Win:Translate("Network:") .. " --")
 
 -- 右栏：在线玩家 / 本地玩家 / 角色状态
 local rightBar, rightTitle = glassPanel(TabCustom.Container, halfW + uGap, 0, halfW, barH, "Server / LocalPlayer")
-local rPlayers = statLine(rightBar, 14, 42, halfW - 28, "在线玩家: --")
-local rName = statLine(rightBar, 14, 66, halfW - 28, "本地玩家: --")
-local rChar = statLine(rightBar, 14, 90, halfW - 28, "角色状态: --")
+local rPlayers = statLine(rightBar, 14, 58, halfW - 28, "在线玩家: --")
+local rName = statLine(rightBar, 14, 82, halfW - 28, "本地玩家: --")
+local rChar = statLine(rightBar, 14, 106, halfW - 28, "角色状态: --")
 
 -- 11.3 实时读取数据（headless 下服务可能缺失，全部 pcall 兜底为占位符）
 local function readStats()
@@ -720,7 +725,8 @@ end
 
 -- 11.4 下方再添加一些自定义 UI：自定义按钮 + 自定义进度条
 local uiY = barH + 18
-local custBtn = Instance.new("TextButton", TabCustom.Container)
+local custBtn = Instance.new("TextButton")
+custBtn.Parent = TabCustom.Container
 custBtn.Name = "CustomButton"
 custBtn.Size = UDim2.fromOffset(halfW, 40)
 custBtn.Position = UDim2.fromOffset(0, uiY)
@@ -732,7 +738,8 @@ custBtn.Text = "点击切换 (自定义界面)"
 custBtn.TextSize = 14
 custBtn.TextColor3 = Color3.fromRGB(240, 244, 255)
 custBtn.RichText = false
-local custBtnCorner = Instance.new("UICorner", custBtn)
+local custBtnCorner = Instance.new("UICorner")
+custBtnCorner.Parent = custBtn
 custBtnCorner.CornerRadius = UDim.new(0, 10)
 local custOn = false
 custBtn.MouseButton1Click:Connect(function()
@@ -741,22 +748,27 @@ custBtn.MouseButton1Click:Connect(function()
     custBtn.Text = custOn and "已开启 (自定义界面)" or "点击切换 (自定义界面)"
 end)
 
-local progTrack = Instance.new("Frame", TabCustom.Container)
+local progTrack = Instance.new("Frame")
+progTrack.Parent = TabCustom.Container
 progTrack.Name = "CustomProgress"
 progTrack.Size = UDim2.fromOffset(halfW, 40)
 progTrack.Position = UDim2.fromOffset(halfW + uGap, uiY)
 progTrack.BackgroundColor3 = Color3.fromRGB(40, 43, 54)
 progTrack.BackgroundTransparency = 0.5
 progTrack.BorderSizePixel = 0
-local progCorner = Instance.new("UICorner", progTrack)
+local progCorner = Instance.new("UICorner")
+progCorner.Parent = progTrack
 progCorner.CornerRadius = UDim.new(0, 8)
-progFill = Instance.new("Frame", progTrack)
+progFill = Instance.new("Frame")
+progFill.Parent = progTrack
 progFill.Size = UDim2.new(0, 0, 1, 0)
 progFill.BackgroundColor3 = Color3.fromRGB(120, 200, 140)
 progFill.BorderSizePixel = 0
-local pfCorner = Instance.new("UICorner", progFill)
+local pfCorner = Instance.new("UICorner")
+pfCorner.Parent = progFill
 pfCorner.CornerRadius = UDim.new(0, 8)
-progLabel = Instance.new("TextLabel", progTrack)
+progLabel = Instance.new("TextLabel")
+progLabel.Parent = progTrack
 progLabel.Size = UDim2.fromScale(1, 1)
 progLabel.BackgroundTransparency = 1
 progLabel.Text = Win:Translate("FPS 进度:") .. " --"
@@ -791,15 +803,11 @@ pcall(function()
 end)
 
 -- ============================================================
--- 10. 读取配置（必须在所有控件建好之后调用）
---     不传名字：自动读回上次使用的配置槽（active.json 里记录）
+-- 10. 配置说明（已移除启动时的自动 Load/Save：本库不再隐式落盘）
+--     配置改为由面板手动管理：点底部 folder-cog 打开 Config Manager，
+--     用「保存配置 / 载入配置 / 删除配置」按钮显式操作。
 -- ============================================================
-if Win:LoadConfig() then
-    print("[AsLab] loaded config:", Win:GetConfigName())
-else
-    Win:SaveConfig()                     -- 首次运行：把默认值落盘成 Default
-end
-syncConfigDrop()                          -- 让配置下拉与真实状态一致
+syncConfigDrop()                          -- 仅初始化示例自己的配置下拉展示
 
 print("AsLab full example ready · language =", Win:GetLanguage(), "· config =", Win:GetConfigName())
 
